@@ -667,8 +667,8 @@ object SIFExtendedTransformer {
       val (cond2d, cond2r) = getNewBool("cond")
       primedNames.update(cond1r.name, cond2r.name)
       newVarDecls ++= Seq(cond1d, cond2d)
-      stmts ++= Seq(LocalVarAssign(cond1r, terminates.get.cond)(),
-        LocalVarAssign(cond2r, translatePrime(terminates.get.cond, p1, p2))())
+      stmts ++= Seq(If(p1, Seqn(Seq(LocalVarAssign(cond1r, terminates.get.cond)()), Seq())(), skip)(),
+        If(p2, Seqn(Seq(LocalVarAssign(cond2r, translatePrime(terminates.get.cond, p1, p2))()), Seq())(), skip)())
       newStdInvs :+= Implies(Not(cond1r)(), w.cond)(
         terminates.get.pos, terminates.get.info, ErrTrafo({
           case _ => SIFTerminationChannelCheckFailed(terminates.get, SIFTermCondNotTight(terminates.get))
@@ -1201,6 +1201,7 @@ object SIFExtendedTransformer {
     val relVars = e.filter{
       case _: SIFLowExp => true
       case _: SIFLowEventExp => true
+      case f@DomainFuncApp("Low", args, _) => true
       case _ => false
     }
     relVars.isEmpty
@@ -1364,6 +1365,7 @@ object SIFExtendedTransformer {
       case pa@PredicateAccess(args, name) => PredicateAccess(args.map(a => translatePrime(a, p1, p2)),
         primedNames(name))(pa.pos, pa.info, pa.errT)
       case _: SIFLowExp => TrueLit()()
+      case f@DomainFuncApp("Low", args, _) => TrueLit()()
       case f@ForPerm(vars, location, body) => ForPerm(vars,
         translateResourceAccess(location),
         translatePrime(body, p1, p2))(f.pos, f.info, f.errT)
@@ -1373,6 +1375,7 @@ object SIFExtendedTransformer {
   def translateNormal[T <: Exp](e: T, p1: Exp, p2: Exp): T = {
     e.transform{
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
+      case f@DomainFuncApp("Low", args, _) => Implies(And(p1, p2)(), translateSIFLowExpComparison(SIFLowExp(args.head)(), p1, p2))()
     }
   }
 
@@ -1387,6 +1390,7 @@ object SIFExtendedTransformer {
   def translateToUnary(e: Exp): Exp = {
     val transformed = e.transform{
       case _: SIFLowExp => TrueLit()()
+      case f@DomainFuncApp("Low", args, _) => TrueLit()()
       case Implies(_: SIFLowExp, _: SIFLowExp) => TrueLit()()
       case i@Implies(lhs, rhs) => Implies(lhs, translateToUnary(rhs))(i.pos, i.info, i.errT)
     }
