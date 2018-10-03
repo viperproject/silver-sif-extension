@@ -9,7 +9,7 @@ case class SIFReturnStmt(exp: Option[Exp], resVar: Option[LocalVar])
                         (val pos: Position = NoPosition,
                          val info: Info = NoInfo,
                          val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq(exp, resVar).collect({case Some(x) => x})
+  override def extensionSubnodes: Seq[Node] = Seq(exp, resVar).collect({case Some(x) => x})
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("return") <+> (exp match {
     case Some(x) => show(x)
@@ -20,7 +20,7 @@ case class SIFReturnStmt(exp: Option[Exp], resVar: Option[LocalVar])
 case class SIFBreakStmt()(val pos: Position = NoPosition,
                           val info: Info = NoInfo,
                           val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq()
+  override def extensionSubnodes: Seq[Node] = Seq()
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("break")
 }
@@ -28,7 +28,7 @@ case class SIFBreakStmt()(val pos: Position = NoPosition,
 case class SIFContinueStmt()(val pos: Position = NoPosition,
                              val info: Info = NoInfo,
                              val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq()
+  override def extensionSubnodes: Seq[Node] = Seq()
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("continue")
 }
@@ -37,7 +37,7 @@ case class SIFRaiseStmt(assignment: Option[LocalVarAssign])
                        (val pos: Position = NoPosition,
                         val info: Info = NoInfo,
                         val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = assignment match {
+  override def extensionSubnodes: Seq[Node] = assignment match {
     case Some(a) => Seq(a)
     case None => Seq()
   }
@@ -50,7 +50,7 @@ case class SIFExceptionHandler(errVar: LocalVar, exception: Exp, body: Seqn)
                               (val pos: Position = NoPosition,
                                val info: Info = NoInfo,
                                val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq(errVar, exception, body)
+  override def extensionSubnodes: Seq[Node] = Seq(errVar, exception, body)
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("catch") <+> parens(show(exception)) <+>
     showBlock(body)
@@ -63,7 +63,7 @@ case class SIFTryCatchStmt(body: Seqn,
                           (val pos: Position = NoPosition,
                            val info: Info = NoInfo,
                            val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq(body) ++
+  override def extensionSubnodes: Seq[Node] = Seq(body) ++
     Seq(elseBlock, finallyBlock).collect({case Some(x) => x}) ++
     catchBlocks.flatMap(h => h.subnodes)
 
@@ -80,7 +80,7 @@ case class SIFDeclassifyStmt(exp: Exp)
                             (val pos: Position = NoPosition,
                              val info: Info = NoInfo,
                              val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq(exp)
+  override def extensionSubnodes: Seq[Node] = Seq(exp)
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("declassify") <+> show(exp)
 }
@@ -89,7 +89,7 @@ case class SIFInlinedCallStmt(stmts: Seqn)
                          (val pos: Position = NoPosition,
                           val info: Info = NoInfo,
                           val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq(stmts)
+  override def extensionSubnodes: Seq[Node] = Seq(stmts)
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("inlined call") <> show(stmts)
 }
@@ -97,7 +97,7 @@ case class SIFInlinedCallStmt(stmts: Seqn)
 case class SIFAssertNoException()(val pos: Position = NoPosition,
                                   val info: Info = NoInfo,
                                   val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
-  override def _subnodes: Seq[Node] = Seq()
+  override def extensionSubnodes: Seq[Node] = Seq()
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("assert no exception")
 }
@@ -106,39 +106,39 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None)
                     (val pos: Position = NoPosition,
                      val info: Info = NoInfo,
                      val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
-  override def _subnodes: Seq[Node] = Seq(exp)
+  override def extensionSubnodes: Seq[Node] = Seq(exp)
 
   override def typ: Type = Bool
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = (if (comparator.isDefined) text("lowVal")
     else text("low")) <> parens(show(exp))
 
-  override val _isPure: Boolean = exp.isPure
+  override val extensionIsPure: Boolean = exp.isPure
 }
 
 case class SIFLowEventExp()(val pos: Position = NoPosition,
                             val info: Info = NoInfo,
                             val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
-  override def _subnodes: Seq[Node] = Nil
+  override def extensionSubnodes: Seq[Node] = Nil
 
   override def typ: Type = Bool
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowEvent")
 
-  override val _isPure: Boolean = false
+  override val extensionIsPure: Boolean = false
 }
 
 case class SIFTerminatesExp(cond: Exp)(val pos: Position = NoPosition,
                                        val info: Info = NoInfo,
                                        val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
-  override def _subnodes: Seq[Node] = Seq(cond)
+  override def extensionSubnodes: Seq[Node] = Seq(cond)
 
   override def typ: Type = Bool
 
   override def prettyPrint: PrettyPrintPrimitives#Cont =
     text("terminates under condition") <+> show(cond)
 
-  override def _isPure: Boolean = cond.isPure
+  override def extensionIsPure: Boolean = cond.isPure
 }
 
 case class SIFInfo(comment: Seq[String],
