@@ -38,6 +38,7 @@ object SIFBuild extends Build {
               mainClass in Compile := None,
               mainClass in assembly := None,
               jarName in assembly := "silver-sif-extension.jar",
+              artifactName := ((n, v, a) => "silver-sif-extension.jar"),
               test in assembly := {},
               fork := true,
                javaOptions in run ++= Seq("-Xss128M", "-Dfile.encoding=UTF-8"),
