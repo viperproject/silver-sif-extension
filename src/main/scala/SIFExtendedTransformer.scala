@@ -679,17 +679,17 @@ object SIFExtendedTransformer {
       p1 = ctrlVars.activeExecNoContNormal(Some(p1)),
       p2 = ctrlVars.activeExecNoContPrime(Some(p2))
     )
-    newStdInvs = simplifyConditions(newStdInvs.map(e => translateSIFAss(e, invCtx)))
+    newStdInvs = simplifyConditions(newStdInvs.map(e => translateSIFAss(e, invCtx, ctx)))
     val newInvs: Seq[Exp] = newStdInvs ++
       targetValEqualities1.map(e => Implies(bypass1r, e)()) ++
       targetValEqualities2.map(e => Implies(bypass2r, e)())
 
     val bodyRes = translateStatement(w.body, ctx.copy(p1 = p1r, p2 = p2r))
-    val bodyPostamble = Seq(
+    /*val bodyPostamble = Seq(
       Inhale(Or(Not(p1)(), ctrlVars.activeExecNoContNormal(None))())(),
       Inhale(Or(Not(p2)(), ctrlVars.activeExecNoContPrime(None))())()
-    )
-    stmts :+= While(newCond, newInvs, Seqn(bodyPreamble ++ Seq(bodyRes) ++ bodyPostamble, Seq())())()
+    ) */
+    stmts :+= While(newCond, newInvs, Seqn(bodyPreamble ++ Seq(bodyRes), Seq())())()
 
     // loop reconstruction
     if (recNeeded) {
@@ -712,7 +712,7 @@ object SIFExtendedTransformer {
         Inhale(Or(Not(p2r)(), Not(ctrlVars.activeExecNoContPrime(None))())())()
       )
       val recThn = Seqn(
-        (ctrlVarAssigns ++ recInhales ++ bodyPreamble ++ Seq(bodyRes)) ++ recKillInhales,
+        (ctrlVarAssigns ++ recInhales ++ bodyPreamble ++ Seq(bodyRes) ++ recKillInhales),
         Seq())()
       stmts :+= If(recCond, recThn, skip)(info=SimpleInfo(Seq("Loop Reconstruction.\n  ")))
     }
@@ -1235,25 +1235,26 @@ object SIFExtendedTransformer {
       Implies(p2, translateSIFExp2(e, p1, p2))(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
   }
 
-  def translateSIFAss(e: Exp, ctx: TranslationContext): Exp = {
+  def translateSIFAss(e: Exp, ctx: TranslationContext, relAssertCtx: TranslationContext = null): Exp = {
     val p1 = ctx.p1
     val p2 = ctx.p2
+    val relCtx = if (relAssertCtx == null) ctx else relAssertCtx
     def bothExecutions(e: Exp, pos: Position = NoPosition, info: Info = NoInfo,
                        errT: ErrorTrafo = NoTrafos): Exp = {
-      Implies(And(p1, p2)(), e)(pos, info, errT)
+      Implies(And(relCtx.p1, relCtx.p2)(), e)(pos, info, errT)
     }
 
     e match {
-      case And(e1, e2) => And(translateSIFAss(e1, ctx), translateSIFAss(e2, ctx))(e.pos, errT = NodeTrafo(e))
+      case And(e1, e2) => And(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e))
       case i@Implies(e1, e2) if !isUnary(i) => {
-        Implies(translateSIFAss(e1, ctx), translateSIFAss(e2, ctx))(e.pos, errT = NodeTrafo(e))
+        Implies(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e))
       }
       case Implies(e1, e2) if e2.exists({
         case PredicateAccessPredicate(loc, _) => predLowFuncs(loc.predicateName).isDefined
         case _ => false
       }) =>
         And(translateAssDefault(e, p1, p2), Implies(
-          translateSIFAss(e1, ctx),
+          translateSIFAss(e1, ctx, relAssertCtx),
           translatePredLowFuncOnly(e2, p1, p2)
         )())(e.pos, e.info, e.errT)
       case fa@Forall(vars, triggers, exp) =>  {
@@ -1273,7 +1274,7 @@ object SIFExtendedTransformer {
           val newTriggers = triggers.map{t => Trigger(t.exps.map{e => translatePrime(e, p1, p2)})()}
           //val res = Forall(vars ++ pvars, newTriggers, Implies(varEqs, translateSIFAss(exp, p1, p2))(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
           val res = Forall(vars, triggers ++ newTriggers,
-            translateSIFAss(exp, ctx))(e.pos, errT = NodeTrafo(e)).autoTrigger
+            translateSIFAss(exp, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e)).autoTrigger
           res
         } else {
           val normal = translateNormal(fa, p1, p2)
@@ -1291,14 +1292,18 @@ object SIFExtendedTransformer {
             EqCmp(translateNormal(dci.dynCheck, p1, p2),
               translatePrime(dci.dynCheck, p1, p2))())())(e.pos, errT = NodeTrafo(e))
         }
+      case l: SIFLowExitExp =>
+        val act1 = ctx.ctrlVars.activeExecNoContNormal(None)
+        val act2 = ctx.ctrlVars.activeExecNoContPrime(None)
+        Implies(And(relCtx.p1, relCtx.p2)(), EqCmp(act1, act2)(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
       case l@SIFLowExp(_, _) =>
-        val comparison = translateSIFLowExpComparison(l, p1, p2)
+        val comparison = translateSIFLowExpComparison(l, relCtx.p1, relCtx.p2)
         val dynCheckInfo = l.info.getUniqueInfo[SIFDynCheckInfo]
         dynCheckInfo match {
           case None => bothExecutions(comparison, e.pos)
           case Some(dci) =>
             val inhalePart = bothExecutions(Implies(
-              EqCmp(translateNormal(dci.dynCheck, p1, p2), translatePrime(dci.dynCheck, p1, p2))(), comparison
+              EqCmp(translateNormal(dci.dynCheck, relCtx.p1, relCtx.p2), translatePrime(dci.dynCheck, relCtx.p1, relCtx.p2))(), comparison
             )(), e.pos)
             if (dci.onlyDynVersion) {
               inhalePart
@@ -1309,7 +1314,7 @@ object SIFExtendedTransformer {
         }
       // for the domain method low, used e.g. for list resource
       case f@DomainFuncApp("Low", args, _) => translateSIFAss(
-        SIFLowExp(args.head, None)(f.pos, f.info, f.errT), ctx)
+        SIFLowExp(args.head, None)(f.pos, f.info, f.errT), ctx, relAssertCtx)
       case pap@PredicateAccessPredicate(pred, _) =>
         val (lowFunc, lhs) = getPredicateLowFuncExp(pred.predicateName, ctx)
         lowFunc match {
@@ -1331,13 +1336,13 @@ object SIFExtendedTransformer {
             And(translateAssDefault(pap, p1, p2), lowPart)(e.pos, errT = NodeTrafo(e))
           case None => translateAssDefault(pap, p1, p2)
         }
-      case o@Old(oldExp) => Old(translateSIFAss(oldExp, ctx))(o.pos, o.info, o.errT)
+      case o@Old(oldExp) => Old(translateSIFAss(oldExp, ctx, relAssertCtx))(o.pos, o.info, o.errT)
       case FuncApp(name, _) if predAllLowFuncs.values.exists(v => v.isDefined && v.get.name == name) =>
         bothExecutions(e)
       case Unfolding(predAcc, body) if !isUnary(body) => bothExecutions(Unfolding(
-        translateNormal(predAcc, p1, p2),
-        Unfolding(translatePrime(predAcc, p1, p2),
-          translateSIFAss(body, ctx))(e.pos, e.info, e.errT))(e.pos, e.info, e.errT),
+        translateNormal(predAcc, relCtx.p1, relCtx.p2),
+        Unfolding(translatePrime(predAcc, relCtx.p1, relCtx.p2),
+          translateSIFAss(body, ctx, relAssertCtx))(e.pos, e.info, e.errT))(e.pos, e.info, e.errT),
         e.pos, e.info, e.errT)
       case _: SIFTerminatesExp => TrueLit()()
       case _ => translateAssDefault(e, p1, p2)

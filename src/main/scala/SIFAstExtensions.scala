@@ -128,6 +128,18 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
   override val extensionIsPure: Boolean = false
 }
 
+case class SIFLowExitExp()(val pos: Position = NoPosition,
+                            val info: Info = NoInfo,
+                            val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
+  override def extensionSubnodes: Seq[Node] = Nil
+
+  override def typ: Type = Bool
+
+  override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowExit")
+
+  override val extensionIsPure: Boolean = false
+}
+
 case class SIFTerminatesExp(cond: Exp)(val pos: Position = NoPosition,
                                        val info: Info = NoInfo,
                                        val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
