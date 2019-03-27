@@ -676,10 +676,10 @@ object SIFExtendedTransformer {
     }
 
     val invCtx = ctx.copy(
-      p1 = ctrlVars.activeExecNoContNormal(Some(p1)),
-      p2 = ctrlVars.activeExecNoContPrime(Some(p2))
+      p1 = And(p1, Not(bypass1r)())(),
+      p2 = And(p2, Not(bypass2r)())()
     )
-    newStdInvs = simplifyConditions(newStdInvs.map(e => translateSIFAss(e, invCtx, ctx)))
+    newStdInvs = simplifyConditions(newStdInvs.map(e => translateSIFAss(e, invCtx, invCtx)))
     val newInvs: Seq[Exp] = newStdInvs ++
       targetValEqualities1.map(e => Implies(bypass1r, e)()) ++
       targetValEqualities2.map(e => Implies(bypass2r, e)())
@@ -704,7 +704,7 @@ object SIFExtendedTransformer {
       val ctrlVarAssigns: Seq[Stmt] = ctrlVars.declarations()
         .map(d => d.localVar)
         .map(v => LocalVarAssign(v, ctrlVarToOldMap(v))())
-      val recInhales: Seq[Stmt] = newStdInvs.map(i => Inhale(i)()) :+
+      val recInhales: Seq[Stmt] = Seq() :+ //newStdInvs.map(i => Inhale(i)()) :+
         Inhale(Implies(ctrlVars.activeExecNoContNormal(Some(p1)), w.cond)())() :+
         Inhale(Implies(ctrlVars.activeExecNoContNormal(Some(p2)), translatePrime(w.cond, p1, p2))())()
       val recKillInhales: Seq[Stmt] = Seq(
