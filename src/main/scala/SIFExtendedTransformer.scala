@@ -1,7 +1,6 @@
 package viper.silver.sif
 
 import viper.silver.ast._
-import viper.silver.parser._
 import viper.silver.ast.utility.Simplifier
 import viper.silver.verifier.errors
 import viper.silver.verifier.errors.AssertFailed
@@ -498,12 +497,12 @@ object SIFExtendedTransformer {
       if (relationalPredicates.contains(pred)) {
         val (lowFName, _, _) = predLowFuncInfo(pred.name).get
         val fBody: Exp = unfoldingPredicates(translatePredLowFuncBody(pred.body.get))
-        lowF = Some(Function(lowFName, lowFFormalArgs, Bool, fPres, Seq(), None, Some(fBody))
+        lowF = Some(Function(lowFName, lowFFormalArgs, Bool, fPres, Seq(), Some(fBody))
         (pred.pos, pred.info, pred.errT))
       }
 
       val allLowBody: Exp = unfoldingPredicates(translatePredAllLowFuncBody(pred.body.get))
-      allLowF = Some(Function(allLowFName, lowFFormalArgs, Bool, fPres, Seq(), None, Some(allLowBody))
+      allLowF = Some(Function(allLowFName, lowFFormalArgs, Bool, fPres, Seq(), Some(allLowBody))
         (pred.pos, pred.info, pred.errT))
 
       primedNames.clear()
