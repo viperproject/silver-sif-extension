@@ -1224,8 +1224,7 @@ object SIFExtendedTransformer {
     val primedExp = translatePrime(l.exp, p1, p2)
     l.comparator match {
       case None => EqCmp(l.exp, primedExp)(l.pos, errT = NodeTrafo(l))
-      case Some(str) => FuncApp(str, Seq(l.exp, primedExp))(l.pos, l.info, Bool,
-        Seq(LocalVarDecl("a1", Ref)(), LocalVarDecl("a2", Ref)()), errT = NodeTrafo(l))
+      case Some(str) => FuncApp(str, Seq(l.exp, primedExp))(l.pos, l.info, Bool, errT = NodeTrafo(l))
     }
   }
 
@@ -1360,11 +1359,11 @@ object SIFExtendedTransformer {
       case f@FuncApp(name, _) if Config.primedFuncAppReplacements.keySet.contains(name) =>
         Config.primedFuncAppReplacements(name)(f, p1, p2)
       case f@FuncApp(name, args) if primedNames.contains(name) => FuncApp(primedNames(name),
-        args.map(a => translatePrime(a, p1, p2)))(f.pos, f.info, f.typ, f.formalArgs, f.errT)
+        args.map(a => translatePrime(a, p1, p2)))(f.pos, f.info, f.typ, f.errT)
       case df@DomainFuncApp(name, args, typVarMap) if primedNames.contains(name) =>
         DomainFuncApp(
           primedNames(name), args.map(a => translatePrime(a, p1, p2)), typVarMap)(
-          df.pos, df.info, df.typ, df.formalArgs, df.domainName, df.errT)
+          df.pos, df.info, df.typ, df.domainName, df.errT)
       case pa@PredicateAccess(args, "MayJoin") => PredicateAccess(args.map(a => translatePrime(a, p1, p2)), "MayJoinP")(pa.pos, pa.info, pa.errT)
       case pa@PredicateAccess(args, name) => PredicateAccess(args.map(a => translatePrime(a, p1, p2)),
         primedNames(name))(pa.pos, pa.info, pa.errT)
@@ -1412,7 +1411,7 @@ object SIFExtendedTransformer {
         val (lowFName, formalArgs, duplicatedFormalArgs) = predLowFuncInfo(loc.predicateName).get
         FuncApp(lowFName,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
-          p.pos, NoInfo, Bool, formalArgs ++ duplicatedFormalArgs, p.errT)
+          p.pos, NoInfo, Bool, p.errT)
       case a@And(left, right) => And(translatePredLowFuncBody(left),
         translatePredLowFuncBody(right))(a.pos, a.info, a.errT)
       case o@Or(left, right) => Or(translatePredLowFuncBody(left),
@@ -1433,7 +1432,7 @@ object SIFExtendedTransformer {
         val (lowFName, formalArgs, duplicatedFormalArgs) = predAllLowFuncInfo(loc.predicateName).get
         FuncApp(lowFName,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
-          p.pos, NoInfo, Bool, formalArgs ++ duplicatedFormalArgs, p.errT)
+          p.pos, NoInfo, Bool, p.errT)
       case a@And(left, right) => And(translatePredAllLowFuncBody(left),
         translatePredAllLowFuncBody(right))(a.pos, a.info, a.errT)
       case o@Or(left, right) => Or(translatePredAllLowFuncBody(left),
