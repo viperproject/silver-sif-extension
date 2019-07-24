@@ -1178,7 +1178,7 @@ object SIFExtendedTransformer {
 
   def getNewVar(name: String, typ: Type) : (LocalVarDecl, LocalVar) = {
     val newName = getName(name)
-    (LocalVarDecl(newName, typ)(), LocalVar(newName)(typ))
+    (LocalVarDecl(newName, typ)(), LocalVar(newName, typ)())
   }
 
   def getNewBool(name: String) : (LocalVarDecl, LocalVar) = {
@@ -1352,7 +1352,7 @@ object SIFExtendedTransformer {
       case d: LocalVarDecl if primedNames.contains(d.name) =>
         d.copy(name = primedNames(d.name))(d.pos, d.info, d.errT)
       case l: LocalVar if primedNames.contains(l.name) =>
-        l.copy(name = primedNames(l.name))(l.typ, l.pos, l.info, l.errT)
+        l.copy(name = primedNames(l.name))(l.pos, l.info, l.errT)
       case l: LocalVar if !primedNames.contains(l.name) => l
       case FieldAccess(rcv, field) =>
         FieldAccess(translatePrime(rcv, p1, p2), newFields.find(f => f.name == primedNames(field.name)).get)(e.pos)
