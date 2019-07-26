@@ -7,6 +7,7 @@ import viper.silver.verifier.errors.AssertFailed
 
 import scala.collection.immutable.HashSet
 import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 
 object SIFExtendedTransformer {
   object Config {
@@ -395,7 +396,9 @@ object SIFExtendedTransformer {
   }
 
   def createControlFlowVars(methodBody: Seqn): MethodControlFlowVars = {
-    if (!Config.optimizeControlFlow) return new MethodControlFlowVars(true, true, true, true)
+    val gotos = methodBody.collect({case Goto(l) => l}).toSet
+    val labels = methodBody.collect({case l@Label(n, _) if gotos.contains(n) => l}).toSet
+    if (!Config.optimizeControlFlow) return new MethodControlFlowVars(true, true, true, true, labels)
     var hasRet, hasBreak, hasCont, hasExcept: Boolean = false
     methodBody.visit({
       case _: SIFReturnStmt => hasRet = true
@@ -404,7 +407,9 @@ object SIFExtendedTransformer {
       case _: SIFRaiseStmt => hasExcept = true
       case _: SIFTryCatchStmt => hasExcept = true
     })
-    new MethodControlFlowVars(hasRet, hasBreak, hasCont, hasExcept)
+    if (labels.nonEmpty && (hasRet || hasBreak || hasCont || hasExcept))
+      throw new IllegalArgumentException
+    new MethodControlFlowVars(hasRet, hasBreak, hasCont, hasExcept, labels)
   }
 
   def incrementTime(p1: Exp, p2: Exp) : Seqn = {
@@ -889,6 +894,8 @@ object SIFExtendedTransformer {
         case _: SIFReturnStmt => true
         case _: SIFBreakStmt => true
         case _: SIFContinueStmt => true
+        case _: Goto => false
+        case _: Label => false
         case _ => false
       }
     }
@@ -1062,12 +1069,13 @@ object SIFExtendedTransformer {
       case s: Seqn => {
         val seq = if (Config.optimizeSequential) flattenSeqn(s) else s
         var newDecls = Seq[Declaration]()
-        for (d <- seq.scopedDecls){
+        for (d <- seq.scopedDecls.filter(d => d.isInstanceOf[LocalVarDecl])){
           val newName = getName(d.name)
           primedNames.update(d.name, newName)
           val newD = LocalVarDecl(newName, d.asInstanceOf[LocalVarDecl].typ)()
           newDecls ++= Seq(d, newD)
         }
+        newDecls ++= seq.scopedDecls.filter(d => d.isInstanceOf[Label])
         val newStmts = if (Config.optimizeSequential) optimizeSequential(seq)
           else seq.ss.map{stmt => translateStatement(stmt, ctx)}
         Seqn(newStmts, newDecls)()
@@ -1172,6 +1180,23 @@ object SIFExtendedTransformer {
         val newCtrlVars = createControlFlowVars(stmts)
         val inlinedCtx = TranslationContext(p1, p2, newCtrlVars, ctx.currentMethod)
         Seqn(newCtrlVars.initAssigns() :+ translateStatement(stmts, inlinedCtx), newCtrlVars.declarations())()
+      case g@Goto(l) => {
+        val varName1 = ctrlVars.labelNames.get(l).get
+        val varName2 = primedNames.get(varName1).get
+        val assign1 = If(act1, Seqn(Seq(LocalVarAssign(LocalVar(varName1, Bool)(), TrueLit()())()), Seq())(), Seqn(Seq(), Seq())())()
+        val assign2 = If(act2, Seqn(Seq(LocalVarAssign(LocalVar(varName2, Bool)(), TrueLit()())()), Seq())(), Seqn(Seq(), Seq())())()
+        Seqn(Seq(assign1, assign2), Seq())()
+      }
+      case lb@Label(l, _) if ctrlVars.labelNames.contains(l) => {
+        val varName1 = ctrlVars.labelNames.get(l).get
+        val varName2 = primedNames.get(varName1).get
+        val thisAct1 = ctx.ctrlVars.activeExecNormalExceptLabel(Some(p1), varName1)
+        val thisAct2 = ctx.ctrlVars.activeExecPrimeExceptLabel(Some(p2), varName2)
+        val assign1 = If(thisAct1, Seqn(Seq(LocalVarAssign(LocalVar(varName1, Bool)(), FalseLit()())()), Seq())(), Seqn(Seq(), Seq())())()
+        val assign2 = If(thisAct2, Seqn(Seq(LocalVarAssign(LocalVar(varName2, Bool)(), FalseLit()())()), Seq())(), Seqn(Seq(), Seq())())()
+        Seqn(Seq(lb, assign1, assign2), Seq())()
+      }
+      case lb : Label => lb
       case _ => throw new IllegalArgumentException
     }
   }
@@ -1533,9 +1558,14 @@ object SIFExtendedTransformer {
                                 translatingPrecond: Boolean = false
                                ) {}
 
-  class MethodControlFlowVars(hasRet: Boolean, hasBreak: Boolean, hasCont: Boolean, hasExcept: Boolean) {
+  class MethodControlFlowVars(hasRet: Boolean, hasBreak: Boolean, hasCont: Boolean, hasExcept: Boolean, labels: Set[Label]) {
     var ret1d, ret2d, break1d, break2d, cont1d, cont2d, except1d, except2d: Option[LocalVarDecl] = None
     var ret1r, ret2r, break1r, break2r, cont1r, cont2r, except1r, except2r: Option[LocalVar] = None
+    val labelRefs1 : ListBuffer[LocalVar] = new ListBuffer[LocalVar]()
+    val labelDecls1 : ListBuffer[LocalVarDecl] = new ListBuffer[LocalVarDecl]()
+    val labelRefs2 : ListBuffer[LocalVar] = new ListBuffer[LocalVar]()
+    val labelDecls2 : ListBuffer[LocalVarDecl] = new ListBuffer[LocalVarDecl]()
+    val labelNames : mutable.HashMap[String, String] = new mutable.HashMap[String, String]()
 
     if (hasRet)    {val t = getNewBool("ret1");    ret1d = Some(t._1);    ret1r = Some(t._2)}
     if (hasRet)    {val t = getNewBool("ret2");    ret2d = Some(t._1);    ret2r = Some(t._2)}
@@ -1549,28 +1579,39 @@ object SIFExtendedTransformer {
     if (hasBreak)  primedNames.update(break1r.get.name, break2r.get.name)
     if (hasCont)   primedNames.update(cont1r.get.name, cont2r.get.name)
     if (hasExcept) primedNames.update(except1r.get.name, except2r.get.name)
+    for (label <- labels){
+      val t1 = getNewBool(label.name + "1")
+      labelRefs1.append(t1._2)
+      labelDecls1.append(t1._1)
+      labelNames.update(label.name, t1._2.name)
+      val t2 = getNewBool(label.name + "2")
+      labelRefs2.append(t2._2)
+      labelDecls2.append(t2._1)
+      primedNames.update(t1._2.name, t2._2.name)
+    }
 
     def declarations(): Seq[LocalVarDecl] = {
       Seq(ret1d, ret2d, break1d, break2d, cont1d, cont2d, except1d, except2d)
         .filter(v => v.isDefined)
-        .map(v => v.get)
+        .map(v => v.get) ++ labelDecls1 ++ labelDecls2
     }
 
     def initAssigns(): Seq[Stmt] = {
-      Seq(ret1r, ret2r, break1r, break2r, cont1r, cont2r, except1r, except2r)
+      (Seq(ret1r, ret2r, break1r, break2r, cont1r, cont2r, except1r, except2r)
         .filter(v => v.isDefined)
-        .map(v => LocalVarAssign(v.get, FalseLit()())())
+        .map(v => LocalVarAssign(v.get, FalseLit()())())) ++
+      (labelRefs1 ++ labelRefs2).map(v => LocalVarAssign(v, FalseLit()())())
     }
 
-    private def conjoinVars(s: Seq[Option[Exp]]): Option[Exp] = {
-      val negations: Seq[Exp] = s.collect({case Some(x) => Not(x)()})
+    private def conjoinVars(s: Seq[Exp]): Option[Exp] = {
+      val negations: Seq[Exp] = s.map(x => Not(x)())
       if (negations.nonEmpty)
         Some(negations.reduceRight[Exp]((x, y) => And(x, y)()))
       else
         None
     }
 
-    private def activeExecHelper(p: Option[Exp], s: Seq[Option[Exp]]): Exp = {
+    private def activeExecHelper(p: Option[Exp], s: Seq[Exp]): Exp = {
       val controls: Option[Exp] = conjoinVars(s)
       val expressions: Seq[Exp] = Seq(p, controls).collect({case Some(x) => x})
       expressions match {
@@ -1580,24 +1621,36 @@ object SIFExtendedTransformer {
       }
     }
 
+    def removeOptions(s: Seq[Option[Exp]]) : Seq[Exp] = {
+      s.filter(v => v.isDefined).map(v => v.get)
+    }
+
+    def activeExecNormalExceptLabel(p1: Option[Exp], labelName: String): Exp = {
+      activeExecHelper(p1, removeOptions(Seq(ret1r, break1r, cont1r, except1r)) ++ labelRefs1.filter(v => !v.name.equals(labelName)))
+    }
+
+    def activeExecPrimeExceptLabel(p2: Option[Exp], labelNamePrime: String): Exp = {
+      activeExecHelper(p2, removeOptions(Seq(ret2r, break2r, cont2r, except2r)) ++ labelRefs2.filter(v => !v.name.equals(labelNamePrime)))
+    }
+
     def activeExecNormal(p1: Option[Exp]): Exp = {
-      activeExecHelper(p1, Seq(ret1r, break1r, cont1r, except1r))
+      activeExecHelper(p1, removeOptions(Seq(ret1r, break1r, cont1r, except1r)) ++ labelRefs1)
     }
     def activeExecPrime(p2: Option[Exp]): Exp = {
-      activeExecHelper(p2, Seq(ret2r, break2r, cont2r, except2r))
+      activeExecHelper(p2, removeOptions(Seq(ret2r, break2r, cont2r, except2r)) ++ labelRefs2)
     }
 
     def activeExecNoContNormal(p1: Option[Exp]): Exp = {
-      activeExecHelper(p1, Seq(ret1r, break1r, except1r))
+      activeExecHelper(p1, removeOptions(Seq(ret1r, break1r, except1r)) ++ labelRefs1)
     }
     def activeExecNoContPrime(p2: Option[Exp]): Exp = {
-      activeExecHelper(p2, Seq(ret2r, break2r, except2r))
+      activeExecHelper(p2, removeOptions(Seq(ret2r, break2r, except2r)) ++ labelRefs2)
     }
   }
 
   object EmptyControlFlowVars {
     def apply(): MethodControlFlowVars = {
-      new MethodControlFlowVars(false, false, false, false)
+      new MethodControlFlowVars(false, false, false, false, Set())
     }
   }
 }
