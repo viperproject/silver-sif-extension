@@ -22,6 +22,10 @@ object SIFExtendedTransformer {
     /** Applications of the functions which have an entry here, will be replaced by the expression
       * determined by the entry in the second execution. */
     var primedFuncAppReplacements: mutable.HashMap[String, (FuncApp, Exp, Exp) => Exp] = new mutable.HashMap
+    /** Set this to only transform methods that contain relational assertions somewhere in their spec or body.
+      * May lead to invalid programs when such a method calls another methods that does contain such specs.
+      */
+    var onlyTransformMethodsWithRelationalSpecs: Boolean = false
   }
   def optimizeControlFlow(v: Boolean): Unit = {
     Config.optimizeControlFlow = v
@@ -31,6 +35,9 @@ object SIFExtendedTransformer {
   }
   def optimizeRestrictActVars(v: Boolean): Unit = {
     Config.optimizeRestrictActVars = v
+  }
+  def onlyTransformMethodsWithRelationalSpecs(v: Boolean): Unit = {
+    Config.onlyTransformMethodsWithRelationalSpecs = v
   }
   def addPrimedFuncAppReplacement(name: String, strategy: String): Unit = {
     strategy match {
@@ -106,7 +113,16 @@ object SIFExtendedTransformer {
       newFunctions ++= predFuncs.collect{case f if f.isDefined => f.get}
     }
     val newDomains: Seq[Domain] = p.domains.map(d => translateDomain(d))
-    val newMethods: Seq[Method] = p.methods.map(m => translateMethod(m))
+
+    val newMethods: Seq[Method] = if (Config.onlyTransformMethodsWithRelationalSpecs) {
+      val relationalMethods = p.methods.filter(m => m.existsDefined({
+        case e: Exp if !isUnary(e) => true
+      }))
+      val unaryMethods = p.methods.filter(m => !relationalMethods.contains(m))
+      relationalMethods.map(m => translateMethod(m)) ++ unaryMethods
+    }else{
+      p.methods.map(m => translateMethod(m))
+    }
 
     p.copy(domains = newDomains, fields = newFields, functions = newFunctions, predicates = newPredicates,
       methods = newMethods)(p.pos, p.info, p.errT)
