@@ -2,8 +2,9 @@ package viper.silver.sif
 
 
 import viper.silver.ast.pretty.PrettyPrintPrimitives
-import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps, parens, nil, show, showBlock, text}
+import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps, nil, parens, show, showBlock, text}
 import viper.silver.ast._
+import viper.silver.verifier.VerificationResult
 
 case class SIFReturnStmt(exp: Option[Exp], resVar: Option[LocalVar])
                         (val pos: Position = NoPosition,
@@ -114,6 +115,8 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None)
     else text("low")) <> parens(show(exp))
 
   override val extensionIsPure: Boolean = exp.isPure
+
+  override def verifyExtExp(): VerificationResult = ???
 }
 
 case class SIFLowEventExp()(val pos: Position = NoPosition,
@@ -126,6 +129,8 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowEvent")
 
   override val extensionIsPure: Boolean = false
+
+  override def verifyExtExp(): VerificationResult = ???
 }
 
 case class SIFLowExitExp()(val pos: Position = NoPosition,
@@ -138,6 +143,8 @@ case class SIFLowExitExp()(val pos: Position = NoPosition,
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowExit")
 
   override val extensionIsPure: Boolean = false
+
+  override def verifyExtExp(): VerificationResult = ???
 }
 
 case class SIFTerminatesExp(cond: Exp)(val pos: Position = NoPosition,
@@ -151,6 +158,8 @@ case class SIFTerminatesExp(cond: Exp)(val pos: Position = NoPosition,
     text("terminates under condition") <+> show(cond)
 
   override def extensionIsPure: Boolean = cond.isPure
+
+  override def verifyExtExp(): VerificationResult = ???
 }
 
 case class SIFInfo(comment: Seq[String],
