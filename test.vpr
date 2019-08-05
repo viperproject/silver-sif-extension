@@ -1,0 +1,21 @@
+lockType MyLock {
+  type Int
+  invariant(l, v) = [l.f |-> v]
+  secInvariant(v) = low(v)
+  actions = [(add,Int,Int,duplicable)]
+
+  action add(v, arg)  
+    requires arg > 0 && low(arg)
+    ensures low(result)
+  {(v + arg), arg}
+}
+
+
+field f : Int
+
+method m(r: Ref, q: Ref)
+  requires [r.f |-> ?n && n > 13]
+  ensures [r.f |-> 3]
+{
+  r.f := 3
+}
