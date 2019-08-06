@@ -13,9 +13,9 @@ lockType MyLock {
 
 field f : Int
 
-method m(r: Ref, q: Ref)
-  requires [r.f |-> ?n && n > 13]
-  ensures [r.f |-> 3]
+method m(r: Ref, q: Ref, l: Lock, t: Thread)
+  requires [r.f |-> ?n && n > 13] && lock[MyLock](l, 1/2) && locked[MyLock](l, 34) && joinable[m](t) //&& guard[MyLock](add, l)
+  ensures [r.f |-> ?n && n > 1 && n < 3]
 {
   r.f := 3
 }

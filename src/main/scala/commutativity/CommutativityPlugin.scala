@@ -1,10 +1,13 @@
 package commutativity
 
+import viper.silver.ast.utility.rewriter.Traverse
+import viper.silver.ast.{And, EqCmp, FieldAccessPredicate, FullPerm, FuncApp, Function, Inhale, Let, LocalVarDecl, Method, NewStmt, NoTrafos, NodeTrafo, Predicate, PredicateAccess, PredicateAccessPredicate, Program, Ref, Seqn, WildcardPerm}
 import viper.silver.parser.FastParser._
 import viper.silver.parser._
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
+import viper.silver.verifier.{AbstractVerificationError, Failure, Success, VerificationResult}
 
-import scala.collection.Set
+import scala.collection.{Set, mutable}
 
 class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
 
@@ -61,7 +64,12 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
   }
   lazy val proofType : P[String] = P("reordering".! | "commutativity".! | "preservation".!)
 
-  lazy val pointsToPred : P[PPointsToPredicate] = P("[" ~ fieldAcc ~ "|->" ~ pointsToRhs ~ "]").map{case (fa, rhs) => PPointsToPredicate(fa, rhs)}
+  lazy val pointsToPred : P[PPointsToPredicate] = P("[" ~ fieldAcc ~ ("|->" | ("|-[" ~ term ~ "]->")) ~ pointsToRhs ~ "]").map{
+    case (fa, p, rhs) => {
+      val perm = if (p.isInstanceOf[PExp]) p.asInstanceOf[PExp] else PFullPerm()
+      PPointsToPredicate(fa, perm, rhs)
+    }
+  }
   lazy val pointsToRhs : P[PNode] = P(anyVal | definingVar | atom)
   lazy val definingVar : P[PLetNestedScope] = P("?" ~ idndef ~ "&&" ~ exp).map{
     case (i, b) => PLetNestedScope(PFormalArgDecl(i, PPrimitiv("Ref")), b)
@@ -94,4 +102,96 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
     input
   }
 
+  override def beforeResolve(input: PProgram): PProgram = {
+    input.transform({
+      case PDomainType(name, args) if name.name == "Lock" && args.length == 0 => PLocktype()
+      case PDomainType(name, args) if name.name == "Thread" && args.length == 0 => PThreadtype()
+    })()
+  }
+
+  override def beforeConsistencyCheck(input: Program): Program = {
+    println("beforeconscheck")
+
+    val lockSpecs = mutable.HashMap[String, LockSpec]()
+    var lockMethods : Seq[Method] = Seq()
+    val lockPredNames = mutable.HashMap[String, String]()
+    val lockedPredNames = mutable.HashMap[String, String]()
+    val actionGuardNames = mutable.HashMap[String, mutable.HashMap[String, String]]()
+    val bottomFuncNames = mutable.HashMap[String, String]()
+
+    input.extensions.foreach{
+      case l@LockSpec(name, t, inv, secInv, actions, proofs) => {
+        lockSpecs.update(name, l)
+        lockPredNames.update(name, "$lockpred$" + name)
+        lockedPredNames.update(name, "$lockedpred$" + name)
+        bottomFuncNames.update(name, "$bottomfunc$" + name)
+        val guardNames = mutable.HashMap[String, String]()
+        actionGuardNames.update(name, guardNames)
+        for (a <- actions){
+          guardNames.update(a.name, "$guard$"+name+"$"+a.name)
+        }
+      }
+    }
+
+    val joinableNames: Map[String, String] = input.methods.map(m=> m.name->("$joinable$" + m.name)).toMap
+
+
+    val joinablePreds = joinableNames.map(n => Predicate(n._2, Seq(LocalVarDecl("$rec", Ref)()), None)())
+    val lockPreds = lockPredNames.map(n => Predicate(n._2, Seq(LocalVarDecl("$rec", Ref)()), None)())
+    val lockedPreds = lockedPredNames.map(n => Predicate(n._2, Seq(LocalVarDecl("$rec", Ref)(), LocalVarDecl("$val", lockSpecs.get(n._1).get.t)()), None)())
+    val guardPreds = actionGuardNames.map(ls => ls._2.map(a => Predicate(a._2, Seq(LocalVarDecl("$rec", Ref)()), None)())).flatten
+
+    val bottomFuncs = bottomFuncNames.map(n => Function(n._2, Seq(), lockSpecs.get(n._1).get.t, Seq(), Seq(), None)())
+
+    val res = input.transform({
+      case pt@PointsToPredicate(fa, p, None) => FieldAccessPredicate(fa, p)()
+      case pt@PointsToPredicate(fa, p, Some(e)) => And(FieldAccessPredicate(fa, p)(), EqCmp(fa, e)())()
+      case pt@VarDefiningPointsToPredicate(fa, p, v, Some(b)) => And(FieldAccessPredicate(fa, p)(errT=NodeTrafo(pt)), Let(v, fa, b)(errT=NodeTrafo(pt)))(errT = NodeTrafo(pt))
+      case pt@VarDefiningPointsToPredicate(fa, p, v, None) => FieldAccessPredicate(fa, p)()
+      case Joinable(m, e) => {
+        val pa = PredicateAccess(Seq(e), joinableNames.get(m).get)()
+        PredicateAccessPredicate(pa, FullPerm()())()
+      }
+      case Lock(lt, r, amount) => {
+        val pa = PredicateAccess(Seq(r), lockPredNames.get(lt).get)()
+        PredicateAccessPredicate(pa, amount)()
+      }
+      case Locked(lt, r, value) => {
+        val pa = PredicateAccess(Seq(r, value), lockedPredNames.get(lt).get)()
+        PredicateAccessPredicate(pa, FullPerm()())()
+      }
+      case Guard(lt, g, lock) => {
+        val action = lockSpecs.get(lt).get.actions.find(a => a.name == g).get
+        val pa = PredicateAccess(Seq(lock), actionGuardNames.get(lt).get.get(g).get)()
+        PredicateAccessPredicate(pa, if (action.duplicable) WildcardPerm()() else FullPerm()())()
+      }
+      case nl@NewLock(lt, target, fields) => {
+        val newStmt = NewStmt(target, fields)()
+        val fp = FullPerm()()
+        val lockPredAcc = PredicateAccess(Seq(target), lockPredNames.get(lt).get)()
+        val lockPred = PredicateAccessPredicate(lockPredAcc, fp)()
+        val bottomApp = FuncApp(bottomFuncNames.get(lt).get, Seq(target))(nl.pos, nl.info, lockSpecs.get(lt).get.t, NoTrafos)
+        val lockedPredAcc = PredicateAccess(Seq(target, bottomApp), lockedPredNames.get(lt).get)()
+        val lockedPred = PredicateAccessPredicate(lockedPredAcc, fp)()
+        val inhale = Inhale(And(lockPred, lockedPred)())()
+        Seqn(Seq(newStmt, inhale), Seq())()
+      }
+      case Threadtype() => Ref
+      case Locktype() => Ref
+    }, Traverse.TopDown)
+
+    val newPredicates = input.predicates ++ joinablePreds ++ lockPreds ++ lockedPreds ++ guardPreds
+    val newFunctions = input.functions ++ bottomFuncs
+
+    val finalRes = res.copy(extensions = Seq(), predicates = newPredicates, functions = newFunctions)(input.pos, input.info, input.errT)
+    println(finalRes)
+    finalRes
+  }
+
+  override def mapVerificationResult(input: VerificationResult): VerificationResult = {
+    input match {
+      case Failure(errors) => Failure(errors.map(e => if (e.isInstanceOf[AbstractVerificationError]) e.asInstanceOf[AbstractVerificationError].transformedError() else e))
+      case Success => input
+    }
+  }
 }
