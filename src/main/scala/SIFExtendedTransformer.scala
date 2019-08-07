@@ -1227,14 +1227,7 @@ object SIFExtendedTransformer {
   }
 
   def isRelational(e: Exp): Boolean = {
-    val unaryVars = e.filter{
-      case v: LocalVar => true
-      case other => false
-    }
-    val relVars = e.filter{
-      case other => false
-    }
-    relVars.nonEmpty && unaryVars.isEmpty
+    !isUnary(e)
   }
 
   def isUnary(e: Exp): Boolean = {
@@ -1289,7 +1282,7 @@ object SIFExtendedTransformer {
         Implies(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e))
       }
       case Implies(e1, e2) if e2.exists({
-        case PredicateAccessPredicate(loc, _) => predLowFuncs(loc.predicateName).isDefined
+        case PredicateAccess(_, name) => predLowFuncs(name).isDefined
         case _ => false
       }) =>
         And(translateAssDefault(e, p1, p2), Implies(

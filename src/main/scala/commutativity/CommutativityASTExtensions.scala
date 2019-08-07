@@ -8,6 +8,50 @@ import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps,show,text}
 
 case class InvariantDef(params: Seq[LocalVarDecl], inv: Exp){
   def subnodes = Seq(inv) ++ params
+
+  private def expWithArgs(e: Exp, args: Seq[Exp]) : Exp = {
+    var res = e
+    for (i <- 0 until params.length){
+      res = res.replace(params(i).localVar, args(i))
+    }
+    res
+  }
+
+  def permissionsWithArgs(args: Seq[Exp]) : Exp = expWithArgs(permissions, args)
+  def pureWithArgs(args: Seq[Exp]) : Exp = expWithArgs(noPerms, args)
+  def withArgs(args: Seq[Exp]) : Exp = expWithArgs(inv, args)
+
+  private def permsOnly(e: Exp): Exp = {
+    e match {
+      case And(e1, e2) => And(permsOnly(e1), permsOnly(e2))()
+      case Implies(e1, e2) => Implies(e1, permsOnly(e2))()
+      case _: FieldAccessPredicate => e
+      case _: PredicateAccessPredicate => e
+      case PointsToPredicate(rec, perm, _) => PointsToPredicate(rec, perm, None)()
+      case VarDefiningPointsToPredicate(rec, perm, decl, None) => e
+      case VarDefiningPointsToPredicate(rec, perm, decl, Some(b)) => VarDefiningPointsToPredicate(rec, perm, decl, Some(permsOnly(b)))()
+      case CondExp(e1, e2, e3) => CondExp(e1, permsOnly(e2), permsOnly(e3))()
+      case Forall(vars, triggers, body) => Forall(vars, triggers, permsOnly(body))()
+      case Let(v, e, body) => Let(v, e, permsOnly(body))()
+      case _ => TrueLit()()
+    }
+  }
+
+  private def withoutPerms(exp: Exp) : Exp = {
+    val res = exp.transform({
+      case _: FieldAccessPredicate => TrueLit()()
+      case _: PredicateAccessPredicate => TrueLit()()
+      case PointsToPredicate(rec, perm, None) => TrueLit()()
+      case PointsToPredicate(rec, perm, Some(e)) => EqCmp(rec, e)()
+      case VarDefiningPointsToPredicate(rec, perm, decl, None) => TrueLit()()
+      case VarDefiningPointsToPredicate(rec, perm, decl, Some(body)) => body.replace(decl.localVar, rec)
+    })
+    res
+  }
+
+  lazy val permissions : Exp = permsOnly(inv)
+  lazy val noPerms : Exp = withoutPerms(inv)
+
 }
 case class LockAction(name: String, argType: Type, retType: Type, duplicable: Boolean, params: Seq[LocalVarDecl], newVal: Exp, returnVal: Exp, pre: Exp, post: Exp) {
   def subnodes = Seq(argType, retType, newVal, returnVal, pre, post) ++ params
@@ -21,7 +65,6 @@ case class LockSpec(name: String, t: Type, invariant: InvariantDef, secInv: Inva
   override lazy val checkTransitively: Seq[ConsistencyError] = Seq()
   val scopedDecls : Seq[Declaration] = Seq()
 
-  override def toString(): String = "I am lockspec " + name
 }
 
 case class PointsToPredicate(receiver: FieldAccess, perm: Exp, arg: Option[Exp])(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionExp {
@@ -75,27 +118,27 @@ case class Guard(lockType: String, guardName: String, lock: Exp)(val pos: Positi
 
 // Statements
 case class NewLock(lockType: String, target: LocalVar, fields: Seq[Field])(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
-  val extensionSubnodes : Seq[Node] = ???
+  val extensionSubnodes : Seq[Node] = Seq(target) ++ fields
   def prettyPrint : PrettyPrintPrimitives#Cont = ???
 }
 
 case class Fork(m: String, tokenVar: LocalVar, args: Seq[Exp])(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
-  val extensionSubnodes : Seq[Node] = ???
+  val extensionSubnodes : Seq[Node] = Seq(tokenVar) ++ args
   def prettyPrint : PrettyPrintPrimitives#Cont = ???
 }
 
 case class Join(m: String, resVars: Seq[LocalVar], tokenArg: Exp)(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
-  val extensionSubnodes : Seq[Node] = ???
+  val extensionSubnodes : Seq[Node] = Seq(tokenArg) ++ resVars
   def prettyPrint : PrettyPrintPrimitives#Cont = ???
 }
 
 case class Release(lockType: String, lockExp: Exp, action: Option[(String, Exp)])(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
-  val extensionSubnodes : Seq[Node] = ???
+  val extensionSubnodes : Seq[Node] = Seq(lockExp) ++ (if (action.isDefined) Seq(action.get._2) else Seq())
   def prettyPrint : PrettyPrintPrimitives#Cont = ???
 }
 
 case class Acquire(lockType: String, lockExp: Exp)(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
-  val extensionSubnodes : Seq[Node] = ???
+  val extensionSubnodes : Seq[Node] = Seq(lockExp)
   def prettyPrint : PrettyPrintPrimitives#Cont = ???
 }
 

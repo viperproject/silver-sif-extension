@@ -13,9 +13,35 @@ lockType MyLock {
 
 field f : Int
 
-method m(r: Ref, q: Ref, l: Lock, t: Thread)
-  requires [r.f |-> ?n && n > 13] && lock[MyLock](l, 1/2) && locked[MyLock](l, 34) && joinable[m](t) //&& guard[MyLock](add, l)
+method m(r: Ref, q: Ref, l: Lock, t: Thread, h: Int)
+  requires h > 0 && lowEvent && [r.f |-> ?n && n > 13] && lock[MyLock](l, 1/2) && guard[MyLock,add](l)//&& locked[MyLock](l, 34) && joinable[m](t) && guard[MyLock](add, l)
   ensures [r.f |-> ?n && n > 1 && n < 3]
 {
-  r.f := 3
+  var afterFirstAcquire : Int
+  var afterFirstRelease : Int
+  r.f := 2
+  acquire[MyLock](l)
+  afterFirstAcquire := 13
+
+  release[MyLock](l)
+  afterFirstRelease := 13
+  acquire[MyLock](l)
+  l.f := l.f + 4
+  release[MyLock](l, add(4))
+
+  var other : Lock
+  other := newLock[MyLock](f)
+  other.f := 15
+  release[MyLock](other)
+
+  var myT : Thread
+  myT := fork print(3)
+
+  afterFirstAcquire := join[print](myT)
+  assert afterFirstAcquire > 3
+  assert afterFirstAcquire > 7
 }
+
+method print(i: Int) returns (r: Int)
+  requires low(i) && lowEvent
+  ensures r > i && r > 5

@@ -2,13 +2,12 @@ package commutativity
 
 import viper.silver.ast._
 import viper.silver.parser._
-import viper.silver.sif.SIFLowExp
+import viper.silver.sif.{SIFLowEventExp, SIFLowExp}
 
 import scala.collection.mutable.ListBuffer
 
 
 case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) extends PExtender with PExp {
-  println("points to predicate")
 
   override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
 
@@ -21,11 +20,6 @@ case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) ex
   override def typecheck(t: TypeChecker, n: NameAnalyser):Option[Seq[String]] = {
     t.checkTopTyped(receiver, None)
     t.checkTopTyped(perm, Some(PPrimitiv("Perm")))
-    println(" just type checked ")
-    println(receiver.typ)
-    println(receiver.rcv)
-    println(receiver.idnuse.decl)
-    println(receiver.rcv.asInstanceOf[PIdnUse].decl)
     arg match {
       case _:PAnyVal => None
       case n@PLetNestedScope(v, b) =>  {
@@ -43,11 +37,6 @@ case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) ex
   }
   override def namecheck(n: NameAnalyser) = ???
   override def translateExp(t: Translator): Exp = {
-    println("now translating")
-    println(receiver.typ)
-    println(receiver.rcv)
-    println(receiver.idnuse.decl)
-    println(receiver.rcv.asInstanceOf[PIdnUse].decl)
     var translatedReceiver = t.exp(receiver).asInstanceOf[FieldAccess]
     val tPerm = t.exp(perm)
     arg match {
@@ -184,7 +173,6 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
     val secInv = this.secInv.translateSecInvariant(t, typ)
     val tActions = actionList.map(decl => translateAction(t, decl, actions.find(d => d.name.name == decl.idndef.name).get, typ))
     val tProofs = proofs.map(_.translate(t, tActions, typ))
-    println("!!!!!!!!!!!! creating a LockSpec")
     LockSpec(idndef.name, typ, inv, secInv, tActions, tProofs)()
   }
 
@@ -223,6 +211,26 @@ case class PLow(e: PExp) extends PExtender with PExp {
   }
 }
 
+case class PLowEvent() extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+
+  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+
+  override def getsubnodes(): Seq[PNode] = Seq()
+
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    None
+  }
+
+  override def translateExp(t: Translator): Exp = {
+    SIFLowEventExp()()
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    this
+  }
+}
+
 case class PJoinable(method: PIdnUse, e: PExp) extends PExtender with PExp {
   override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
 
@@ -235,7 +243,7 @@ case class PJoinable(method: PIdnUse, e: PExp) extends PExtender with PExp {
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
-    t.checkTopTyped(e, Some(PThreadtype()))
+    t.checkTopTyped(e, Some(PPrimitiv("Ref")))
     n.definition(t.curMember)(method) match {
       case _: PMethod => None
       case _ => Some(Seq("Unknown method: " + method.name))
@@ -259,7 +267,7 @@ case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtend
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
-    t.checkTopTyped(lockRef, Some(PLocktype()))
+    t.checkTopTyped(lockRef, Some(PPrimitiv("Ref")))
     t.checkTopTyped(amount, Some(PPrimitiv("Perm")))
     n.definition(t.curMember)(lockType) match {
       case _: PLockSpec => {
@@ -286,7 +294,7 @@ case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExten
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
-    t.checkTopTyped(lockRef, Some(PLocktype()))
+    t.checkTopTyped(lockRef, Some(PPrimitiv("Ref")))
 
     n.definition(t.curMember)(lockType) match {
       case ls: PLockSpec => {
@@ -307,14 +315,14 @@ case class PGuard(lockType: PIdnUse, guardName: PIdnUse, lockRef: PExp) extends 
 
   override def typeSubstitutions: Seq[PTypeSubstitution] = ???
 
-  override def getsubnodes(): Seq[PNode] = Seq(lockType, guardName, lockRef)
+  override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef)
 
   override def translateExp(t: Translator): Exp = {
     Guard(lockType.name, guardName.name, t.exp(lockRef))()
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
-    t.checkTopTyped(lockRef, Some(PLocktype()))
+    t.checkTopTyped(lockRef, Some(PPrimitiv("Ref")))
 
     n.definition(t.curMember)(lockType) match {
       case ls: PLockSpec => {
@@ -371,23 +379,139 @@ case class PThreadtype() extends PExtender with PType {
 }
 
 case class PFork(method: PIdnUse, target: PIdnUse, args: Seq[PExp]) extends PExtender with PStmt {
+  override def getsubnodes(): Seq[PNode] = Seq(method, target) ++ args
+
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    t.checkTopTyped(target, Some(PPrimitiv("Ref")))
+    n.definition(t.curMember)(method) match {
+      case m: PMethod => {
+        if (m.formalArgs.length == args.length){
+          for (i <- 0 until args.length){
+            t.checkTopTyped(args(i), Some(m.formalArgs(i).typ))
+          }
+          None
+        }else {
+          Some(Seq("Incorrect number of arguments"))
+        }
+      }
+      case _ => Some(Seq("Unknown method: " + method.name))
+    }
+  }
+
   override def translateStmt(t: Translator): Stmt = {
-    Fork(method.name, LocalVar(target.name, Ref)(), args map t.exp)()
+    Fork(method.name, t.exp(target).asInstanceOf[LocalVar], args map (t.exp(_)))()
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PFork(go(method).asInstanceOf[PIdnUse], go(target).asInstanceOf[PIdnUse], args map (go(_).asInstanceOf[PExp]))
   }
 }
 
 case class PJoin(method: PIdnUse, resVars: Seq[PIdnUse], token: PExp) extends PExtender with PStmt {
+  override def getsubnodes(): Seq[PNode] = Seq(method, token) ++ resVars
 
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    t.checkTopTyped(token, Some(PPrimitiv("Ref")))
+    n.definition(t.curMember)(method) match {
+      case m: PMethod => {
+        if (m.formalReturns.length == resVars.length){
+          for (i <- 0 until resVars.length){
+            t.checkTopTyped(resVars(i), Some(m.formalReturns(i).typ))
+          }
+          None
+        }else {
+          Some(Seq("Incorrect number of target variables"))
+        }
+      }
+      case _ => Some(Seq("Unknown method: " + method.name))
+    }
+  }
+
+  override def translateStmt(t: Translator): Stmt = {
+    Join(method.name, resVars map (t.exp(_).asInstanceOf[LocalVar]), t.exp(token))()
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PJoin(go(method).asInstanceOf[PIdnUse], resVars map (go(_).asInstanceOf[PIdnUse]),  go(token).asInstanceOf[PExp])
+  }
 }
 
 case class PNewLock(lockType: PIdnUse, target: PIdnUse, fields: Seq[PIdnUse]) extends PExtender with PStmt {
+  override def getsubnodes(): Seq[PNode] = Seq(lockType, target) ++ fields
 
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    t.checkTopTyped(target, Some(PPrimitiv("Ref")))
+    n.definition(t.curMember)(lockType) match {
+      case ls: PLockSpec => {
+        for (f <- fields){
+          n.definition(t.curMember)(f) match {
+            case fieldDef:PField => f.typ = fieldDef.typ
+            case _ => return Some(Seq("Expected field: " + f.name))
+          }
+        }
+        None
+      }
+      case _ => Some(Seq("Unknown lock type: " + lockType.name))
+    }
+  }
+
+  override def translateStmt(t: Translator): Stmt = {
+    NewLock(lockType.name, LocalVar(target.name, t.ttyp(target.typ))(), fields map (f => Field(f.name, t.ttyp(f.typ))()))()
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PNewLock(go(lockType).asInstanceOf[PIdnUse], go(target).asInstanceOf[PIdnUse], fields map (go(_).asInstanceOf[PIdnUse]))
+  }
 }
 
 case class PAcquire(lockType: PIdnUse, lockExp: PExp) extends PExtender with PStmt {
+  override def getsubnodes(): Seq[PNode] = Seq(lockType, lockExp)
 
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    t.checkTopTyped(lockExp, Some(PPrimitiv("Ref")))
+    n.definition(t.curMember)(lockType) match {
+      case ls: PLockSpec => None
+      case _ => Some(Seq("Unknown lock type: " + lockType.name))
+    }
+  }
+
+  override def translateStmt(t: Translator): Stmt = {
+    Acquire(lockType.name, t.exp(lockExp))()
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PAcquire(go(lockType).asInstanceOf[PIdnUse], go(lockExp).asInstanceOf[PExp])
+  }
 }
 
 case class PRelease(lockType: PIdnUse, lockExp: PExp, action: Option[(PIdnUse, PExp)]) extends PExtender with PStmt {
+  override def getsubnodes(): Seq[PNode] = Seq(lockType, lockExp) ++ (if (action.isDefined) Seq(action.get._1, action.get._2) else Seq())
 
+  override def translateStmt(t: Translator): Stmt = {
+    Release(lockType.name, t.exp(lockExp), if (action.isDefined) Some((action.get._1.name, t.exp(action.get._2))) else None)()
+  }
+
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    t.checkTopTyped(lockExp, Some(PPrimitiv("Ref")))
+    n.definition(t.curMember)(lockType) match {
+      case ls: PLockSpec => {
+        if (action.isDefined){
+          val actionDecl = ls.actionList.find(a => a.idndef.name == action.get._1.name)
+          if (actionDecl.isDefined) {
+            t.checkTopTyped(action.get._2, Some(actionDecl.get.argType))
+            None
+          }else{
+            Some(Seq("Unknown action: " + action.get._1.name))
+          }
+        }else{
+          None
+        }
+      }
+      case _ => Some(Seq("Unknown lock type: " + lockType.name))
+    }
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PRelease(go(lockType).asInstanceOf[PIdnUse], go(lockExp).asInstanceOf[PExp], if (action.isDefined) Some((go(action.get._1).asInstanceOf[PIdnUse], go(action.get._2).asInstanceOf[PExp])) else None)
+  }
 }
