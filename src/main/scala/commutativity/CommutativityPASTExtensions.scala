@@ -117,17 +117,100 @@ case class PLockActionDef(name: PIdnUse, args: Seq[PIdnDef], newVal: PExp, retur
     PLockActionDef(go(name).asInstanceOf[PIdnUse], args map (go(_).asInstanceOf[PIdnDef]), go(newVal).asInstanceOf[PExp], go(returnVal).asInstanceOf[PExp], go(pre).asInstanceOf[PExp], go(post).asInstanceOf[PExp])
   }
 }
-case class PProof(proofType: String, actions: Seq[PIdnUse], params: Seq[PIdnDef], body: PStmt) {
+case class PProof(proofType: String, actions: Seq[PIdnUse], params: Seq[PIdnDef], body: PSeqn) {
   def subnodes: Seq[PNode] = actions ++ params ++ Seq(body)
   def translate(t: Translator, actionDecls: Seq[LockAction], typ: Type) : Proof = {
     val types : Seq[Type] = proofType match {
-      case "TODO" => Seq()
+      case "preservation" => {
+        val action = actionDecls.find(ad => ad.name == actions(0).name).get
+        Seq(typ, action.argType)
+      }
+      case "commutativity" => {
+        val a1 = actionDecls.find(ad => ad.name == actions(0).name).get
+        val a2 = actionDecls.find(ad => ad.name == actions(1).name).get
+        Seq(typ, a1.argType, a2.argType)
+      }
+      case "reordering" => {
+        val a1 = actionDecls.find(ad => ad.name == actions(0).name).get
+        val a2 = actionDecls.find(ad => ad.name == actions(1).name).get
+        Seq(typ, a1.argType, a2.argType)
+      }
     }
     Proof(proofType, actions map (_.name), (0 until params.length) map (i => LocalVarDecl(params(i).name, types(i))()), t.stmt(body).asInstanceOf[Seqn])
   }
 
+  def typecheck(tc: TypeChecker, ns: NameAnalyser, actionDecls: Seq[PLockActionDecl], t: PType) : Seq[String] = {
+    proofType match {
+      case "preservation" => {
+        if (actions.length != 1){
+          return Seq("Wrong number of actions for preservation proof.")
+        }else if (params.length != 2){
+          return Seq("Wrong number of parameters for preservation proof.")
+        }
+        val actionDecl = actionDecls.find(ad => ad.idndef.name == actions(0).name)
+        if (actionDecl.isEmpty){
+          return Seq("Unknown action: " + actions(0).name)
+        }
+        val fakeParams = Seq(PFormalArgDecl(PIdnDef(params(0).name), t), PFormalArgDecl(PIdnDef(params(1).name), actionDecl.get.argType))
+        val fakeMethod = PMethod(PIdnDef(actionDecl.get.idndef.name + "$proof$pres$"), fakeParams, Seq(), Seq(), Seq(), Some(body))
+        ns.namesInScope(fakeMethod, None)
+        tc.checkDeclaration(fakeMethod)
+        tc.checkBody(fakeMethod)
+        Seq()
+      }
+      case "commutativity" => {
+        if (actions.length != 2){
+          return Seq("Wrong number of actions for commutativity proof.")
+        }else if (params.length != 3){
+          return Seq("Wrong number of parameters for commutativity proof.")
+        }
+        val a1 = actionDecls.find(ad => ad.idndef.name == actions(0).name)
+        if (a1.isEmpty){
+          return Seq("Unknown action: " + actions(0).name)
+        }
+        val a2 = actionDecls.find(ad => ad.idndef.name == actions(1).name)
+        if (a2.isEmpty){
+          return Seq("Unknown action: " + actions(1).name)
+        }
+        if (actionDecls.indexOf(a1.get) > actionDecls.indexOf(a2.get)){
+          return Seq("Incorrect action order in commutativity proof: " + actions(0).name + ", " + actions(1).name)
+        }
+        val fakeParams = Seq(PFormalArgDecl(PIdnDef(params(0).name), t), PFormalArgDecl(PIdnDef(params(1).name), a1.get.argType), PFormalArgDecl(PIdnDef(params(2).name), a2.get.argType))
+        val fakeMethod = PMethod(PIdnDef("$proof$comm$" + a1.get.idndef.name + "$" + a2.get.idndef.name), fakeParams, Seq(), Seq(), Seq(), Some(body))
+        ns.namesInScope(fakeMethod, None)
+        tc.checkDeclaration(fakeMethod)
+        tc.checkBody(fakeMethod)
+        Seq()
+      }
+      case "reordering" => {
+        if (actions.length != 2){
+          return Seq("Wrong number of actions for reordering proof.")
+        }else if (params.length != 3){
+          return Seq("Wrong number of parameters for reordering proof.")
+        }
+        val a1 = actionDecls.find(ad => ad.idndef.name == actions(0).name)
+        if (a1.isEmpty){
+          return Seq("Unknown action: " + actions(0).name)
+        }
+        val a2 = actionDecls.find(ad => ad.idndef.name == actions(1).name)
+        if (a2.isEmpty){
+          return Seq("Unknown action: " + actions(1).name)
+        }
+        if (actionDecls.indexOf(a1.get) > actionDecls.indexOf(a2.get)){
+          return Seq("Incorrect action order in reordering proof: " + actions(0).name + ", " + actions(1).name)
+        }
+        val fakeParams = Seq(PFormalArgDecl(PIdnDef(params(0).name), t), PFormalArgDecl(PIdnDef(params(1).name), a1.get.argType), PFormalArgDecl(PIdnDef(params(2).name), a2.get.argType))
+        val fakeMethod = PMethod(PIdnDef("$proof$reo$" + a1.get.idndef.name + "$" + a2.get.idndef.name), fakeParams, Seq(), Seq(), Seq(), Some(body))
+        ns.namesInScope(fakeMethod, None)
+        tc.checkDeclaration(fakeMethod)
+        tc.checkBody(fakeMethod)
+        Seq()
+      }
+    }
+  }
+
   def transform(go: PNode => PNode): PProof = {
-    PProof(proofType, actions map (go(_).asInstanceOf[PIdnUse]), params map (go(_).asInstanceOf[PIdnDef]), go(body).asInstanceOf[PStmt])
+    PProof(proofType, actions map (go(_).asInstanceOf[PIdnUse]), params map (go(_).asInstanceOf[PIdnDef]), go(body).asInstanceOf[PSeqn])
   }
 }
 
@@ -135,7 +218,6 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
   override def getsubnodes: Seq[PNode] = Seq(idndef) ++ invariant.subnodes ++ secInv.subnodes ++ (actionList map (_.subnodes)).flatten ++ (actions map (_.subnodes)).flatten ++ (proofs map (_.subnodes)).flatten
 
   override def typecheck(tc: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
-    // TODO
     val allErrors = ListBuffer[String]()
     if (actionList.length != actions.length || actionList.exists(decl => !actions.exists(d => d.name.name == decl.idndef.name))){
       allErrors.append(idndef.name + ": Action declarations and action definitions do not match.")
@@ -144,6 +226,9 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
     }
     invariant.typecheckInvariant(tc, n, t, idndef.name)
     secInv.typecheckSecInvariant(tc, n, t, idndef.name)
+    for (proof <- proofs) {
+      allErrors ++= proof.typecheck(tc, n, actionList, t)
+    }
     if (allErrors.isEmpty)
       None
     else

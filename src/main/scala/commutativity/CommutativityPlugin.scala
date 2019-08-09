@@ -1,12 +1,13 @@
 package commutativity
 
+import viper.silver.ast.utility.Expressions
 import viper.silver.ast.utility.rewriter.Traverse
-import viper.silver.ast.{And, Assert, CondExp, CurrentPerm, EqCmp, Exhale, FieldAccessPredicate, Forall, FullPerm, FuncApp, Function, Implies, Inhale, Let, LocalVarAssign, LocalVarDecl, Method, NewStmt, NoPerm, NoTrafos, NodeTrafo, PermGeCmp, PermGtCmp, Predicate, PredicateAccess, PredicateAccessPredicate, Program, Ref, Result, Seqn, Stmt, Trigger, WildcardPerm}
+import viper.silver.ast.{And, Assert, Bool, CondExp, CurrentPerm, EqCmp, Exhale, FieldAccessPredicate, Forall, FullPerm, FuncApp, Function, Implies, Inhale, Let, LocalVarAssign, LocalVarDecl, Method, NewStmt, NoPerm, NoTrafos, NodeTrafo, PermGeCmp, PermGtCmp, Predicate, PredicateAccess, PredicateAccessPredicate, Program, Ref, Result, Seqn, Stmt, Trigger, WildcardPerm}
 import viper.silver.parser.FastParser._
 import viper.silver.parser._
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
 import viper.silver.sif.{SIFExtendedTransformer, SIFLowEventExp}
-import viper.silver.verifier.{AbstractVerificationError, Failure, Success, VerificationResult}
+import viper.silver.verifier._
 
 import scala.collection.mutable.ListBuffer
 import scala.collection.{Set, mutable}
@@ -73,8 +74,8 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
     "{" ~ atom ~ "," ~ atom ~ "}").map{
     case (name, params, pre, post, newVal, retVal) => PLockActionDef(name, params, newVal, retVal, pre, post)
   }
-  lazy val proof : P[PProof] = P("proof" ~/ proofType ~ parens(idnuse.rep(sep=",")) ~ parens(idndef.rep(sep=",")) ~ "{" ~  stmt ~ "}").map{
-    case (ptype, actions, params, pstmt) => PProof(ptype, actions, params, pstmt)
+  lazy val proof : P[PProof] = P("proof" ~/ proofType ~ "[" ~ idnuse.rep(sep=",") ~ "]" ~ parens(idndef.rep(sep=",")) ~ "{" ~  stmts ~ "}").map{
+    case (ptype, actions, params, pstmt) => PProof(ptype, actions, params, PSeqn(pstmt))
   }
   lazy val proofType : P[String] = P("reordering".! | "commutativity".! | "preservation".!)
 
@@ -122,6 +123,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
     input.transform({
       case PDomainType(name, args) if name.name == "Lock" && args.length == 0 => PPrimitiv("Ref")
       case PDomainType(name, args) if name.name == "Thread" && args.length == 0 => PPrimitiv("Ref")
+      case PAssume(e) => PInhale(e)
     })()
   }
 
@@ -141,29 +143,218 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
 
     input.extensions.foreach{
       case l@LockSpec(name, t, inv, secInv, actions, proofs) => {
+        if (!Expressions.isPure(secInv.inv)){
+          reportError(TypecheckerError("Security invariant must be pure", secInv.inv.pos))
+        }
+        inv.inv.visit{
+          case _: Lock => reportError(TypecheckerError("Invariants must not contain lock() assertions.", inv.inv.pos))
+          case _: Locked => reportError(TypecheckerError("Invariants must not contain locked() assertions.", inv.inv.pos))
+        }
+
         lockSpecs.update(name, l)
         lockPredNames.update(name, "$lockpred$" + name)
         lockedPredNames.update(name, "$lockedpred$" + name)
         bottomFuncNames.update(name, "$bottomfunc$" + name)
         val guardNames = mutable.HashMap[String, String]()
         actionGuardNames.update(name, guardNames)
+
+
         for (a <- actions){
           guardNames.update(a.name, "$guard$"+name+"$"+a.name)
+          if (!Expressions.isPure(a.pre)){
+            reportError(TypecheckerError("Precondition must be pure", a.pre.pos))
+          }
+          if (!Expressions.isPure(a.post)){
+            reportError(TypecheckerError("Postcondition must be pure", a.post.pos))
+          }
+          if (!Expressions.isPure(a.newVal)){
+            reportError(TypecheckerError("Action definition must be pure", a.newVal.pos))
+          }
+          if (!Expressions.isPure(a.returnVal)){
+            reportError(TypecheckerError("Action definition must be pure", a.returnVal.pos))
+          }
         }
       }
     }
 
+
     val joinableNames: Map[String, String] = input.methods.map(m=> m.name->("$joinable$" + m.name)).toMap
-
-
     val joinablePreds = joinableNames.map(n => Predicate(n._2, Seq(LocalVarDecl("$rec", Ref)()), None)())
     val lockPreds = lockPredNames.map(n => Predicate(n._2, Seq(LocalVarDecl("$rec", Ref)()), None)())
     val lockedPreds = lockedPredNames.map(n => Predicate(n._2, Seq(LocalVarDecl("$rec", Ref)(), LocalVarDecl("$val", lockSpecs.get(n._1).get.t)()), None)())
     val guardPreds = actionGuardNames.map(ls => ls._2.map(a => Predicate(a._2, Seq(LocalVarDecl("$rec", Ref)()), None)())).flatten
-
     val bottomFuncs = bottomFuncNames.map(n => Function(n._2, Seq(), lockSpecs.get(n._1).get.t, Seq(), Seq(), None)())
 
-    val res = input.transform({
+
+    val newPredicates = input.predicates ++ joinablePreds ++ lockPreds ++ lockedPreds ++ guardPreds
+    val newFunctions = input.functions ++ bottomFuncs
+    val newMethods = ListBuffer[Method]()
+    input.methods.foreach(newMethods.append(_))
+
+    input.extensions.foreach{
+      case l@LockSpec(name, t, inv, secInv, actions, proofs) => {
+
+        ////// invariant uniquely defines value (ud)
+        // declare 1 lock, 2 value vars
+        val udLockVar = LocalVarDecl("$udVar$" + getFreshInt(), Ref)()
+        val udVal1 = LocalVarDecl("$udVar1$" + getFreshInt(), t)()
+        val udVal2 = LocalVarDecl("$udVar2$" + getFreshInt(), t)()
+
+        // inhale perms
+        val perms = inv.permissionsWithArgs(Seq(udLockVar.localVar, udVal1.localVar))
+
+        // inhale val def on first and second var
+        val valDef1 = inv.pureWithArgs(Seq(udLockVar.localVar, udVal1.localVar))
+        val valDef2 = inv.pureWithArgs(Seq(udLockVar.localVar, udVal2.localVar))
+
+        // assert same var
+        val sameVal = EqCmp(udVal1.localVar, udVal2.localVar)()
+
+        val udMethod = Method("$udCheck$" + name + "$" + getFreshInt(), Seq(udLockVar, udVal1, udVal2), Seq(), Seq(perms, valDef1, valDef2), Seq(sameVal), Some(Seqn(Seq(), Seq())()))()
+        newMethods.append(udMethod)
+
+        for (a <- actions){
+
+          ////// actionX2 preserves secinv
+          // declare original, final val, ret val variables
+          val presOrigVar = LocalVarDecl("$presOrig$" + getFreshInt(), t)()
+          val presArgVar = LocalVarDecl("$presArg$" + getFreshInt(), a.argType)()
+          val presFinalVar = LocalVarDecl("$presFinal$" + getFreshInt(), t)()
+          val presRetVar = LocalVarDecl("$presRet$" + getFreshInt(), a.retType)()
+
+          // assume secInv and precond
+          val presSecInv = secInv.withArgs(Seq(presOrigVar.localVar))
+          val presPrecond = a.pre.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar)
+
+          // define results
+          val presFinalVal = a.newVal.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar)
+          val presRetVal = a.returnVal.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar)
+          val presFinalValEq = EqCmp(presFinalVar.localVar, presFinalVal)()
+          val presRetValEq = EqCmp(presRetVar.localVar, presRetVal)()
+
+          // assert post and secinv
+          val presPostcond = a.post.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar).replace(Result(a.retType)(), presRetVar.localVar)
+          val presSecInvFinal = secInv.withArgs(Seq(presFinalVar.localVar))
+          val presProof = proofs.find(p => p.proofType == "preservation" && p.actions.length == 1 && p.actions(0) == a.name)
+          val presBody = presProof match {
+            case None => Some(Seqn(Seq(), Seq())())
+            case Some(p) => Some(p.body.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar))
+          }
+          val presMethod = Method("$presCheck$" + getFreshInt(), Seq(presOrigVar, presArgVar, presFinalVar, presRetVar), Seq(), Seq(presSecInv, presPrecond, presFinalValEq, presRetValEq), Seq(presPostcond, presSecInvFinal), presBody)()
+          newMethods.append(presMethod)
+
+          ////// (optional) precondition implies welldef of newVal
+
+
+          ////// (optional) precondition implies welldef of retVal
+
+
+          ////// (optional) precondition implies welldef of post
+
+          val a1 = a
+          for (a2 <- actions){
+            if (actions.indexOf(a1) < actions.indexOf(a2) || (a1 == a2 && a1.duplicable)){
+              // for every action with every other action including itself
+
+              ////// actions can be reordered
+              // all vars
+              val reoOrigDecl = LocalVarDecl("$reoOrig$" + getFreshInt(), t)()
+              val reoArg1Decl = LocalVarDecl("$reoArg1$" + getFreshInt(), a1.argType)()
+              val reoArg2Decl = LocalVarDecl("$reoArg2$" + getFreshInt(), a2.argType)()
+              val reoTmpOpt1Decl = LocalVarDecl("$reoTmpOpt11$" + getFreshInt(), t)()
+              val reoTmpOpt2Decl = LocalVarDecl("$reoTmpOpt2$" + getFreshInt(), t)()
+
+              // assumptions: secinv, opt1 pres hold
+              val reoOrigSecInv = secInv.withArgs(Seq(reoOrigDecl.localVar))
+              val reoOpt1Pre2 = a2.pre.replace(a2.params(0).localVar, reoOrigDecl.localVar).replace(a2.params(1).localVar, reoArg2Decl.localVar)
+              val reoOpt1TmpDef = EqCmp(reoTmpOpt1Decl.localVar, a2.newVal.replace(a2.params(0).localVar, reoOrigDecl.localVar).replace(a2.params(1).localVar, reoArg2Decl.localVar))()
+              val reoOpt1Pre1 = a1.pre.replace(a1.params(0).localVar, reoTmpOpt1Decl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar)
+
+              // opt2 pres hold
+              val reoOpt2Pre1 = a1.pre.replace(a1.params(0).localVar, reoOrigDecl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar)
+              val reoOpt2TmpDef = EqCmp(reoTmpOpt2Decl.localVar, a1.newVal.replace(a1.params(0).localVar, reoOrigDecl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar))()
+              val reoOpt2Pre2 = a2.pre.replace(a2.params(0).localVar, reoTmpOpt2Decl.localVar).replace(a2.params(1).localVar, reoArg2Decl.localVar)
+              val reoOpt2Pre2Impl = Implies(reoOpt2TmpDef, reoOpt2Pre2)()
+
+              val reoName = "$reoCheck$" + a1.name + "$" + a2.name + "$" + getFreshInt()
+              val reoParams = Seq(reoOrigDecl, reoArg1Decl, reoArg2Decl, reoTmpOpt1Decl, reoTmpOpt2Decl)
+              val reoPres = Seq(reoOrigSecInv, reoOpt1Pre2, reoOpt1TmpDef, reoOpt1Pre1)
+              val reoPosts = Seq(reoOpt2Pre1, reoOpt2Pre2Impl)
+
+              val reoProof = proofs.find(p => p.proofType == "reordering" && p.actions(0) == a1.name && p.actions(1) == a2.name)
+              val reoBody = if (reoProof.isDefined){
+                reoProof.get.body.replace(reoProof.get.params(0).localVar, reoOrigDecl.localVar).replace(reoProof.get.params(1).localVar, reoArg1Decl.localVar).replace(reoProof.get.params(2).localVar, reoArg2Decl.localVar)
+              }else{
+                Seqn(Seq(), Seq())()
+              }
+              val reoMethod = Method(reoName, reoParams, Seq(), reoPres, reoPosts, Some(reoBody))()
+              newMethods.append(reoMethod)
+
+
+
+              ////// actions commute
+              // all vars
+              val commOrigDecl = LocalVarDecl("$commOrig$" + getFreshInt(), t)()
+              val commFinalDecl = LocalVarDecl("$commFinal$" + getFreshInt(), t)()
+              val commChoiceDecl = LocalVarDecl("$commChoice$" + getFreshInt(), Bool)()
+              val commOrig1Decl = LocalVarDecl("$commOrig1$" + getFreshInt(), t)()
+              val commOrig2Decl = LocalVarDecl("$commOrig2$" + getFreshInt(), t)()
+              val commArg1Decl = LocalVarDecl("$commArg1$" + getFreshInt(), a1.argType)()
+              val commArg2Decl = LocalVarDecl("$commArg2$" + getFreshInt(), a2.argType)()
+              val commRes1Decl = LocalVarDecl("$commRes1$" + getFreshInt(), t)()
+              val commRes2Decl = LocalVarDecl("$commRes2$" + getFreshInt(), t)()
+              val commRet1Decl = LocalVarDecl("$commRet1$" + getFreshInt(), a1.retType)()
+              val commRet2Decl = LocalVarDecl("$commRet2$" + getFreshInt(), a2.retType)()
+
+              // pres hold
+              val commPreA1 = a1.pre.replace(a1.params(0).localVar, commOrig1Decl.localVar).replace(a1.params(1).localVar, commArg1Decl.localVar)
+              val commPreA2 = a2.pre.replace(a2.params(0).localVar, commOrig2Decl.localVar).replace(a2.params(1).localVar, commArg2Decl.localVar)
+              val commOrigSecInv = secInv.withArgs(Seq(commOrigDecl.localVar))
+
+              // define results
+              val commResA1 = EqCmp(commRes1Decl.localVar, a1.newVal.replace(a1.params(0).localVar, commOrig1Decl.localVar).replace(a1.params(1).localVar, commArg1Decl.localVar))()
+              val commResA2 = EqCmp(commRes2Decl.localVar, a2.newVal.replace(a2.params(0).localVar, commOrig2Decl.localVar).replace(a2.params(1).localVar, commArg2Decl.localVar))()
+              val commRetA1 = EqCmp(commRet1Decl.localVar, a1.returnVal.replace(a1.params(0).localVar, commOrig1Decl.localVar).replace(a1.params(1).localVar, commArg1Decl.localVar))()
+              val commRetA2 = EqCmp(commRet2Decl.localVar, a2.returnVal.replace(a2.params(0).localVar, commOrig2Decl.localVar).replace(a2.params(1).localVar, commArg2Decl.localVar))()
+
+              // define both execution orders
+              val commOpt1Orig = EqCmp(commOrigDecl.localVar, commOrig1Decl.localVar)()
+              val commOpt1ResOrig = EqCmp(commOrig2Decl.localVar, commRes1Decl.localVar)()
+              val commOpt1Final = EqCmp(commFinalDecl.localVar, commRes2Decl.localVar)()
+              val commOpt2Orig = EqCmp(commOrigDecl.localVar, commOrig2Decl.localVar)()
+              val commOpt2ResOrig = EqCmp(commOrig1Decl.localVar, commRes2Decl.localVar)()
+              val commOpt2Final = EqCmp(commFinalDecl.localVar, commRes1Decl.localVar)()
+              val commOpt1 = And(And(commOpt1Orig, commOpt1ResOrig)(), commOpt1Final)()
+              val commOpt2 = And(And(commOpt2Orig, commOpt2ResOrig)(), commOpt2Final)()
+              val commOptions = CondExp(commChoiceDecl.localVar, commOpt1, commOpt2)()
+
+              // checks
+              val commCheckSecInv = secInv.withArgs(Seq(commFinalDecl.localVar))
+              val commCheckPostA1 = a1.post.replace(a1.params(0).localVar, commOrig1Decl.localVar).replace(a1.params(1).localVar, commArg1Decl.localVar).replace(Result(a1.retType)(), commRet1Decl.localVar)
+              val commCheckPostA2 = a2.post.replace(a2.params(0).localVar, commOrig2Decl.localVar).replace(a2.params(1).localVar, commArg2Decl.localVar).replace(Result(a2.retType)(), commRet2Decl.localVar)
+
+              val commName = "$commCheck$" + a1.name + "$" + a2.name + "$" + getFreshInt()
+              val commParams = Seq(commOrigDecl, commFinalDecl, commChoiceDecl, commOrig1Decl, commOrig2Decl, commArg1Decl, commArg2Decl, commRes1Decl, commRes2Decl, commRet1Decl, commRet2Decl)
+              val commPres = Seq(commPreA1, commPreA2, commOrigSecInv, commResA1, commResA2, commRetA1, commRetA2, commOptions)
+              val commPosts = Seq(commCheckSecInv, commCheckPostA1, commCheckPostA2)
+
+              val commProof = proofs.find(p => p.proofType == "commutativity" && p.actions(0) == a1.name && p.actions(1) == a2.name)
+              val commBody = if (commProof.isDefined){
+                commProof.get.body.replace(commProof.get.params(0).localVar, commOrigDecl.localVar).replace(commProof.get.params(1).localVar, commArg1Decl.localVar).replace(commProof.get.params(2).localVar, commArg2Decl.localVar)
+              }else{
+                Seqn(Seq(), Seq())()
+              }
+              val commMethod = Method(commName, commParams, Seq(), commPres, commPosts, Some(commBody))()
+              newMethods.append(commMethod)
+            }
+          }
+        }
+      }
+    }
+
+    val withAdded = input.copy(extensions = Seq(), predicates = newPredicates, functions = newFunctions, methods = newMethods)(input.pos, input.info, input.errT)
+
+    val res = withAdded.transform({
       case pt@PointsToPredicate(fa, p, None) => FieldAccessPredicate(fa, p)()
       case pt@PointsToPredicate(fa, p, Some(e)) => And(FieldAccessPredicate(fa, p)(), EqCmp(fa, e)())()
       case pt@VarDefiningPointsToPredicate(fa, p, v, Some(b)) => And(FieldAccessPredicate(fa, p)(errT=NodeTrafo(pt)), Let(v, fa, b)(errT=NodeTrafo(pt)))(errT = NodeTrafo(pt))
@@ -332,11 +523,8 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
       //case Locktype() => Ref
     }, Traverse.TopDown)
 
-    val newPredicates = input.predicates ++ joinablePreds ++ lockPreds ++ lockedPreds ++ guardPreds
-    val newFunctions = input.functions ++ bottomFuncs
-
-    val finalRes = res.copy(extensions = Seq(), predicates = newPredicates, functions = newFunctions)(input.pos, input.info, input.errT)
-    val productRes = SIFExtendedTransformer.transform(finalRes, false)
+    println(res)
+    val productRes = SIFExtendedTransformer.transform(res, false)
     productRes
   }
 

@@ -1104,6 +1104,7 @@ object SIFExtendedTransformer {
         }
         Assert(translateSIFAss(e1, newCtx))(s.pos, errT= NodeTrafo(s))
       case i@Inhale(FalseLit()) => i
+      case Assume(e1) => Assume(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= NodeTrafo(s))
       case Inhale(e1) => Inhale(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= NodeTrafo(s))
       case Exhale(e1) => Exhale(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= NodeTrafo(s))
       case d : LocalVarDeclStmt => d
@@ -1213,7 +1214,7 @@ object SIFExtendedTransformer {
         Seqn(Seq(lb, assign1, assign2), Seq())()
       }
       case lb : Label => lb
-      case _ => throw new IllegalArgumentException
+      case other => throw new IllegalArgumentException("unexpected: " + other)
     }
   }
 

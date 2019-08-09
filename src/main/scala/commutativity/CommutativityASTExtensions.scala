@@ -11,7 +11,10 @@ case class InvariantDef(params: Seq[LocalVarDecl], inv: Exp){
 
   private def expWithArgs(e: Exp, args: Seq[Exp]) : Exp = {
     var res = e
-    for (i <- 0 until params.length){
+    if (args.length != params.length){
+      throw new IllegalArgumentException
+    }
+    for (i <- 0 until args.length){
       res = res.replace(params(i).localVar, args(i))
     }
     res
