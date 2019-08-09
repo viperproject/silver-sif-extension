@@ -1464,10 +1464,15 @@ object SIFExtendedTransformer {
     val translated = e match {
       case FieldAccessPredicate(loc, _) => EqCmp(loc, translatePrime(loc, null, null))()
       case p@PredicateAccessPredicate(loc, _) =>
-        val (lowFName, formalArgs, duplicatedFormalArgs) = predAllLowFuncInfo(loc.predicateName).get
-        FuncApp(lowFName,
-          loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
-          p.pos, NoInfo, Bool, p.errT)
+        if (predAllLowFuncInfo(loc.predicateName).isDefined){
+          val (lowFName, formalArgs, duplicatedFormalArgs) = predAllLowFuncInfo(loc.predicateName).get
+          FuncApp(lowFName,
+            loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
+            p.pos, NoInfo, Bool, p.errT)
+        }else{
+          TrueLit()()
+        }
+
       case a@And(left, right) => And(translatePredAllLowFuncBody(left),
         translatePredAllLowFuncBody(right))(a.pos, a.info, a.errT)
       case o@Or(left, right) => Or(translatePredAllLowFuncBody(left),

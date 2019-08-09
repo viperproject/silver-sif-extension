@@ -1,0 +1,162 @@
+
+method print(i: Seq[Int])
+  requires lowEvent && low(i)
+
+domain Pair[T,V] {
+  function pair(t: T, v: V) : Pair[T,V]
+  function fst(p: Pair[T, V]) : T
+  function snd(p: Pair[T, V]) : V
+
+  axiom fst_def {
+    forall t: T, v: V :: {fst(pair(t, v))} fst(pair(t, v)) == t
+  }  
+
+  axiom snd_def {
+    forall t: T, v: V :: {snd(pair(t, v))} snd(pair(t, v)) == v
+  }
+
+}
+
+domain Map[T,V] {
+  function empty(): Map[T,V]
+  function keys(m: Map[T,V]): Set[T]
+  function get(m: Map[T,V], k: T) : V
+  function put(m: Map[T,V], k: T, v: V): Map[T,V]
+
+  axiom empty_def {
+    keys(empty()) == Set[T]() 
+  }
+
+  axiom put_keys {
+    forall m: Map[T,V], k: T, v: V :: {keys(put(m, k, v))} keys(put(m, k, v)) == keys(m) union Set(k) 
+  }
+
+  axiom put_get {
+    forall m: Map[T,V], k1: T, k2: T, v: V :: {get(put(m, k1, v), k2)} get(put(m, k1, v), k2) == (k1 == k2 ? v : get(m, k2))
+  }
+}
+
+domain Array {
+  function loc(a: Array, i: Int): Ref
+  function len(a: Array): Int
+  function loc_inv_arr(r: Ref): Array
+  function loc_inv_index(r: Ref): Int
+  
+  axiom all_diff {
+    forall a: Array, i: Int :: {loc(a, i)} loc_inv_arr(loc(a, i)) == a && loc_inv_index(loc(a, i)) == i
+  }
+
+  axiom length_nonneg {
+    forall a: Array :: len(a) >= 0
+  }
+}
+
+lockType MapLock {
+  type Map[Int, Int]
+  invariant(l, v) = [l.lockMap |-> ?mp && isMap(mp) && v == mapValue(mp)]
+  secInvariant(v) = low(keys(v))
+
+  actions = [(Put, Pair[Int, Int], Int, duplicable)]
+  
+  action Put(v, arg)
+    requires low(fst(arg))
+    ensures true
+  { (put(v, fst(arg), snd(arg))), (fst(arg)) }
+}
+
+predicate isMap(r: Ref)
+function mapValue(r: Ref): Map[Int, Int]
+  requires isMap(r)
+
+field arr_loc: Ref
+method emptyArray(n: Int) returns (a: Array)
+  requires n >= 0
+  ensures len(a) == n && forall i : Int :: i >= 0 && i < n ==> acc(loc(a, i).arr_loc) 
+
+predicate joinableArrayEntry(rec: Ref, inputs: Seq[Int], l: Ref, secret: Int, p: Perm) {
+  acc(rec.arr_loc) &&  (joinable[worker](rec.arr_loc, inputs, l, secret, p))
+}
+
+function toSeq(s: Set[Int]) : Seq[Int]
+
+method createMap() returns (r: Ref)
+  requires true
+  ensures isMap(r) && mapValue(r) == empty()
+
+method mapPut(r: Ref, k: Int, v: Int)
+  requires isMap(r)
+  ensures isMap(r) && mapValue(r) == put(old(mapValue(r)), k, v)
+
+field lockMap : Ref
+
+
+method main(inputs: Seq[Seq[Int]], secret: Int)
+  requires lowEvent && low(inputs)
+  ensures true
+{
+  var m : Ref
+  m := createMap()
+  var l : Lock
+  l := newLock[MapLock](lockMap)
+  l.lockMap := m
+  release[MapLock](l)
+  var i : Int := 0
+  var threads : Array
+  threads := emptyArray(|inputs|)
+  while (i < |inputs|)
+    invariant i >= 0 && i <= |inputs| && low(i)
+    invariant forall j : Int :: j >= 0 && j < |inputs| && j >= i ==> acc(loc(threads, j).arr_loc)
+    invariant forall j : Int :: j >= 0 && j < i ==> joinableArrayEntry(loc(threads, j), inputs[j], l, secret, 1/(|inputs| + 1))
+    invariant lock[MapLock](l, (|inputs|+1-i)/(|inputs| + 1))
+    invariant guard[MapLock,Put](l)
+  {
+    var t: Thread
+    t := fork worker(inputs[i], l, secret, 1/(|inputs| + 1))
+    loc(threads, i).arr_loc := t
+    fold joinableArrayEntry(loc(threads, i), inputs[i], l, secret, 1/(|inputs| + 1))
+    i := i + 1
+  }
+  
+  i := 0
+  while (i < |inputs|)
+    invariant i >= 0 && i <= |inputs| && low(i)
+    invariant forall j : Int :: j >= 0 && j < |inputs| && j >= i ==> joinableArrayEntry(loc(threads, j), inputs[j], l, secret, 1/(|inputs| + 1)) 
+    invariant forall j : Int :: j >= 0 && j < i ==> acc(loc(threads, j).arr_loc) 
+    invariant lock[MapLock](l, (i+1)/(|inputs| + 1))
+  {
+    unfold joinableArrayEntry(loc(threads, i), inputs[i], l, secret, 1/(|inputs| + 1))
+    join[worker](loc(threads, i).arr_loc)
+    i := i + 1
+  }
+  acquire[MapLock](l)
+  var res: Seq[Int]
+  res := toSeq(keys(mapValue(l.lockMap)))
+  print(res)
+
+}
+
+
+method worker(inputs: Seq[Int], l: Lock, secret: Int, p: Perm)
+  requires lowEvent && low(inputs) && lock[MapLock](l, p) && guard[MapLock,Put](l) && p > none
+  ensures lock[MapLock](l, p)
+{
+  var i : Int := 0
+  while (i < |inputs|) 
+    invariant i >= 0 && i <= |inputs| && low(i) && lock[MapLock](l, p) && guard[MapLock,Put](l)
+  {
+    var k: Int
+    var v: Int
+    k, v := compute(inputs[i], secret)
+    acquire[MapLock](l)
+    var tmp : Map[Int, Int]
+    tmp := mapValue(l.lockMap) 
+    mapPut(l.lockMap, k, v)
+    assert mapValue(l.lockMap) == put(tmp, k, v) 
+    release[MapLock](l, Put(pair(k, v)))
+    i := i + 1
+    
+  }
+}
+
+method compute(val: Int, secret: Int) returns (r1: Int, r2: Int)
+  ensures low(val) ==> low(r1)

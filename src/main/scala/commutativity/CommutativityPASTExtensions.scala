@@ -316,7 +316,7 @@ case class PLowEvent() extends PExtender with PExp {
   }
 }
 
-case class PJoinable(method: PIdnUse, e: PExp) extends PExtender with PExp {
+case class PJoinable(method: PIdnUse, e: PExp, args: Seq[PExp]) extends PExtender with PExp {
   override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
 
   override def typeSubstitutions: Seq[PTypeSubstitution] = ???
@@ -324,19 +324,28 @@ case class PJoinable(method: PIdnUse, e: PExp) extends PExtender with PExp {
   override def getsubnodes(): Seq[PNode] = Seq(method, e)
 
   override def translateExp(t: Translator): Exp = {
-    Joinable(method.name, t.exp(e))()
+    Joinable(method.name, t.exp(e), args map (t.exp(_)))()
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
     t.checkTopTyped(e, Some(PPrimitiv("Ref")))
     n.definition(t.curMember)(method) match {
-      case _: PMethod => None
+      case m: PMethod => {
+        if (m.formalArgs.length == args.length){
+          for (i <- 0 until args.length) {
+            t.checkTopTyped(args(i), Some(m.formalArgs(i).typ))
+          }
+          None
+        }else{
+          Some(Seq("Wrong number of arguments in joinable[" + method.name + "]"))
+        }
+      }
       case _ => Some(Seq("Unknown method: " + method.name))
     }
   }
 
   override def transform(go: PNode => PNode): PExtender = {
-    PJoinable(go(method).asInstanceOf[PIdnUse], go(e).asInstanceOf[PExp])
+    PJoinable(go(method).asInstanceOf[PIdnUse], go(e).asInstanceOf[PExp], args map (go(_).asInstanceOf[PExp]))
   }
 }
 
@@ -503,7 +512,15 @@ case class PJoin(method: PIdnUse, resVars: Seq[PIdnUse], token: PExp) extends PE
           for (i <- 0 until resVars.length){
             t.checkTopTyped(resVars(i), Some(m.formalReturns(i).typ))
           }
-          None
+          var hasOld = false
+          m.posts.foreach(post => post.visit({
+            case _: POld => hasOld = true
+          }))
+          if (hasOld){
+            Some(Seq("Joining methods with old expressions in postcondition is not supported."))
+          }else{
+            None
+          }
         }else {
           Some(Seq("Incorrect number of target variables"))
         }

@@ -2,25 +2,22 @@ lockType MyLock {
   type Int
   invariant(l, v) = [l.f |-> v]
   secInvariant(v) = low(v)
-  actions = [(add,Int,Int,duplicable),(mult,Int,Int,duplicable)]
-
-  action mult(v, arg)
-    requires low(arg)
-    ensures true
-  {(v * arg), arg}
+  actions = [(add,Int,Int,duplicable)]
 
   action add(v, arg)  
     requires arg > 0 && low(arg)
     ensures low(result)
   {(v + arg), arg}
 
+/*
   proof commutativity[add,mult](v,arg1,arg2) {
-    inhale false
+    //inhale false
   }
 
   proof preservation[add](v, arg) {
     //inhale low(arg)
   }
+*/
 }
 
 field q : Seq[Int]
@@ -39,10 +36,11 @@ lockType Stack {
     requires |v| > 0
     ensures true
   {(v[1..]), (v[0])}
-
-  proof reordering[push,pop](v, arg1, arg2) {
-    assume true // |v| > 0
+/*
+  proof reordering[pop,push](v, arg1, arg2) {
+    assume  |v| > 0
   }
+*/
 }
 
 function aref(): Ref
@@ -70,7 +68,7 @@ method m(r: Ref, q0: Ref, l: Lock, t: Thread, h: Int)
   var afterFirstAcquire : Int
   var afterFirstRelease : Int
   r.f := 2
-/*
+
   acquire[MyLock](l)
   afterFirstAcquire := 13
 
@@ -90,8 +88,8 @@ method m(r: Ref, q0: Ref, l: Lock, t: Thread, h: Int)
 
   afterFirstAcquire := join[print](myT)
   assert afterFirstAcquire > 3
-  assert afterFirstAcquire > 7
-*/
+  //assert afterFirstAcquire > 7
+
 }
 
 method print(i: Int) returns (r: Int)

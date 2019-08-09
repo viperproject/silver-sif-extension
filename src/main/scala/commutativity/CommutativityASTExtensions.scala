@@ -86,10 +86,10 @@ case class VarDefiningPointsToPredicate(receiver: FieldAccess, perm: Exp, varDec
   override def verifyExtExp(): VerificationResult = ???
 }
 
-case class Joinable(method: String, e: Exp)(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionExp {
+case class Joinable(method: String, e: Exp, args: Seq[Exp])(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionExp {
   val typ : Type = Bool
   val extensionIsPure: Boolean = false
-  val extensionSubnodes : Seq[Node] = Seq(e)
+  val extensionSubnodes : Seq[Node] = Seq(e) ++ args
   def prettyPrint : PrettyPrintPrimitives#Cont = ???
   override def verifyExtExp(): VerificationResult = ???
 }
