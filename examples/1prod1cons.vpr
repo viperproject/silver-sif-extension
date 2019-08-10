@@ -112,7 +112,7 @@ method consumer(l: Lock, n: Int, secret: Int)
     var len : Int
     len := length(l.queue)
     while (len == 0)
-      invariant [l.queue |-> ?lp && isList(lp) && len == |seqValue(lp)| && locked[Channel](l, seqValue(lp))]
+      invariant [l.queue |-> ?lp && isList(lp) && len == |seqValue(lp)| && lock[Channel](l, 1/4) && locked[Channel](l, seqValue(lp))]
     {
       release[Channel](l)
       acquire[Channel](l)

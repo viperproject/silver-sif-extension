@@ -7,14 +7,16 @@ import viper.silver.sif.{SIFLowEventExp, SIFLowExp}
 import scala.collection.mutable.ListBuffer
 
 
-case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) extends PExtender with PExp {
+case class PSimplePointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PExp) extends PExtender with POpApp {
 
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+  override def args: Seq[PExp] = Seq(receiver, perm, arg)
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "pointsto"
+
+  override def signatures = ???
 
   override def transform(go: PNode => PNode): PExtender = {
-    PPointsToPredicate(go(receiver).asInstanceOf[PFieldAccess], go(perm).asInstanceOf[PExp], go(arg))
+    PSimplePointsToPredicate(go(receiver).asInstanceOf[PFieldAccess], go(perm).asInstanceOf[PExp], go(arg).asInstanceOf[PExp])
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser):Option[Seq[String]] = {
@@ -22,13 +24,6 @@ case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) ex
     t.checkTopTyped(perm, Some(PPrimitiv("Perm")))
     arg match {
       case _:PAnyVal => None
-      case n@PLetNestedScope(v, b) =>  {
-        val oldNs = t.curMember
-        v.typ = receiver.typ
-        t.curMember = n
-        t.checkInternal(b)
-        t.curMember = oldNs
-      }
       case _ => {
         t.checkTopTyped(arg.asInstanceOf[PExp], Some(receiver.typ))
       }
@@ -40,9 +35,8 @@ case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) ex
     var translatedReceiver = t.exp(receiver).asInstanceOf[FieldAccess]
     val tPerm = t.exp(perm)
     arg match {
-      case PLetNestedScope(v, b) => VarDefiningPointsToPredicate(translatedReceiver, tPerm, LocalVarDecl(v.idndef.name, t.ttyp(v.typ))(), Some(t.exp(b)))(t.liftPos(this))
-      case PAnyVal() => PointsToPredicate(translatedReceiver, tPerm, None)()
-      case e => PointsToPredicate(translatedReceiver, tPerm, Some(t.exp(e.asInstanceOf[PExp])))()
+      case PAnyVal() => PointsToPredicate(translatedReceiver, tPerm, None)(t.liftPos(this))
+      case e => PointsToPredicate(translatedReceiver, tPerm, Some(t.exp(e.asInstanceOf[PExp])))(t.liftPos(this))
     }
   }
 
@@ -50,12 +44,36 @@ case class PPointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PNode) ex
   override def getsubnodes(): Seq[PNode] = Seq(receiver, perm, arg)
 }
 
-case class PDefiningVarRef(id: PIdnDef) extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PVarDefiningPointsToPredicate(receiver: PFieldAccess, perm: PExp, var arg: PLet) extends PExtender with POpApp {
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def args: Seq[PExp] = Seq(receiver, perm, arg)
 
-  override def getsubnodes(): Seq[PNode] = Seq(id)
+
+  override def opName: String = "pointsto"
+
+  override def signatures = ???
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PVarDefiningPointsToPredicate(go(receiver).asInstanceOf[PFieldAccess], go(perm).asInstanceOf[PExp], go(arg).asInstanceOf[PLet])
+  }
+
+  override def typecheck(t: TypeChecker, n: NameAnalyser):Option[Seq[String]] = {
+    t.checkTopTyped(receiver, None)
+    //this.arg = PLet(arg.exp, PLetNestedScope(PFormalArgDecl(arg.nestedScope.variable.idndef, receiver.typ), arg.nestedScope.body))
+    t.checkTopTyped(perm, Some(PPrimitiv("Perm")))
+    t.checkTopTyped(arg, Some(PPrimitiv("Bool")))
+    None
+  }
+  override def namecheck(n: NameAnalyser) = ???
+  override def translateExp(t: Translator): Exp = {
+    var translatedReceiver = t.exp(receiver).asInstanceOf[FieldAccess]
+    val tPerm = t.exp(perm)
+    val tLet = t.exp((arg)).asInstanceOf[Let]
+    VarDefiningPointsToPredicate(translatedReceiver, tPerm, tLet.variable, Some(tLet.body))(t.liftPos(this))
+  }
+
+  override def subnodes: Seq[PNode] = getsubnodes()
+  override def getsubnodes(): Seq[PNode] = Seq(receiver, perm, arg)
 }
 
 case class PAnyVal() extends PExtender with PExp {
@@ -64,12 +82,12 @@ case class PAnyVal() extends PExtender with PExp {
   override def typeSubstitutions: Seq[PTypeSubstitution] = ???
 
   override def getsubnodes(): Seq[PNode] = Seq()
+
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = None
 }
 
 case class PInvariantDef(args: Seq[PIdnDef], inv: PExp) {
   def subnodes: Seq[PNode] = args ++ Seq(inv)
-
-
 
   def typecheckInvariant(t: TypeChecker, na: NameAnalyser, typ: PType, locktype: String) : Unit = {
     val bool = PPrimitiv("Bool")
@@ -110,7 +128,7 @@ case class PLockActionDecl(val idndef: PIdnDef, argType: PType, retType: PType, 
     PLockActionDecl(go(idndef).asInstanceOf[PIdnDef], go(argType).asInstanceOf[PType], go(retType).asInstanceOf[PType], duplicable)
   }
 }
-case class PLockActionDef(name: PIdnUse, args: Seq[PIdnDef], newVal: PExp, returnVal: PExp, pre: PExp, post: PExp) {
+case class PLockActionDef(name: PIdnUse, args: Seq[PIdnDef], newVal: PExp, returnVal: PExp, pre: PExp, post: PExp) extends FastPositioned {
   def subnodes: Seq[PNode] = args ++ Seq(name, newVal, returnVal, pre, post)
 
   def transform(go: PNode => PNode): PLockActionDef = {
@@ -258,7 +276,7 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
     val secInv = this.secInv.translateSecInvariant(t, typ)
     val tActions = actionList.map(decl => translateAction(t, decl, actions.find(d => d.name.name == decl.idndef.name).get, typ))
     val tProofs = proofs.map(_.translate(t, tActions, typ))
-    LockSpec(idndef.name, typ, inv, secInv, tActions, tProofs)()
+    LockSpec(idndef.name, typ, inv, secInv, tActions, tProofs)(t.liftPos(this))
   }
 
   def translateAction(t: Translator, decl: PLockActionDecl, d: PLockActionDef, typ: Type) : LockAction = {
@@ -267,7 +285,7 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
     val retVal = t.exp(d.returnVal)
     val pre = t.exp(d.pre)
     val post = t.exp(d.post)
-    LockAction(decl.idndef.name, t.ttyp(decl.argType), t.ttyp(decl.retType), decl.duplicable, params, newVal, retVal, pre, post)
+    LockAction(decl.idndef.name, t.ttyp(decl.argType), t.ttyp(decl.retType), decl.duplicable, params, newVal, retVal, pre, post)(t.liftPos(d))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -275,10 +293,12 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
   }
 }
 
-case class PLow(e: PExp) extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PLow(e: PExp) extends PExtender with POpApp {
+  override def args: Seq[PExp] = Seq(e)
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "low"
+
+  override def signatures = ???
 
   override def getsubnodes(): Seq[PNode] = Seq(e)
 
@@ -288,7 +308,7 @@ case class PLow(e: PExp) extends PExtender with PExp {
   }
 
   override def translateExp(t: Translator): Exp = {
-    SIFLowExp(t.exp(e), None)()
+    SIFLowExp(t.exp(e), None)(t.liftPos(this))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -296,10 +316,12 @@ case class PLow(e: PExp) extends PExtender with PExp {
   }
 }
 
-case class PLowEvent() extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PLowEvent() extends PExtender with POpApp {
+  override def args: Seq[PExp] = Seq()
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "lowEvent"
+
+  override def signatures = ???
 
   override def getsubnodes(): Seq[PNode] = Seq()
 
@@ -308,7 +330,7 @@ case class PLowEvent() extends PExtender with PExp {
   }
 
   override def translateExp(t: Translator): Exp = {
-    SIFLowEventExp()()
+    SIFLowEventExp()(t.liftPos(this))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -316,24 +338,26 @@ case class PLowEvent() extends PExtender with PExp {
   }
 }
 
-case class PJoinable(method: PIdnUse, e: PExp, args: Seq[PExp]) extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PJoinable(method: PIdnUse, e: PExp, arguments: Seq[PExp]) extends PExtender with POpApp {
+  override def args: Seq[PExp] = Seq(e) ++ arguments
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "joinable"
 
-  override def getsubnodes(): Seq[PNode] = Seq(method, e)
+  override def signatures = ???
+
+  override def getsubnodes(): Seq[PNode] = Seq(method, e) ++ arguments
 
   override def translateExp(t: Translator): Exp = {
-    Joinable(method.name, t.exp(e), args map (t.exp(_)))()
+    Joinable(method.name, t.exp(e), arguments map (t.exp(_)))(t.liftPos(this))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
     t.checkTopTyped(e, Some(PPrimitiv("Ref")))
     n.definition(t.curMember)(method) match {
       case m: PMethod => {
-        if (m.formalArgs.length == args.length){
-          for (i <- 0 until args.length) {
-            t.checkTopTyped(args(i), Some(m.formalArgs(i).typ))
+        if (m.formalArgs.length == arguments.length){
+          for (i <- 0 until arguments.length) {
+            t.checkTopTyped(arguments(i), Some(m.formalArgs(i).typ))
           }
           None
         }else{
@@ -345,19 +369,21 @@ case class PJoinable(method: PIdnUse, e: PExp, args: Seq[PExp]) extends PExtende
   }
 
   override def transform(go: PNode => PNode): PExtender = {
-    PJoinable(go(method).asInstanceOf[PIdnUse], go(e).asInstanceOf[PExp], args map (go(_).asInstanceOf[PExp]))
+    PJoinable(go(method).asInstanceOf[PIdnUse], go(e).asInstanceOf[PExp], arguments map (go(_).asInstanceOf[PExp]))
   }
 }
 
-case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtender with POpApp {
+  override def args: Seq[PExp] = Seq(lockRef, amount)
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "lock"
+
+  override def signatures = ???
 
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef, amount)
 
   override def translateExp(t: Translator): Exp = {
-    Lock(lockType.name, t.exp(lockRef), t.exp(amount))()
+    Lock(lockType.name, t.exp(lockRef), t.exp(amount))(t.liftPos(this))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
@@ -376,15 +402,17 @@ case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtend
   }
 }
 
-case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExtender with POpApp {
+  override def args: Seq[PExp] = Seq(lockRef, value)
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "locked"
+
+  override def signatures = ???
 
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef, value)
 
   override def translateExp(t: Translator): Exp = {
-    Locked(lockType.name, t.exp(lockRef), t.exp(value))()
+    Locked(lockType.name, t.exp(lockRef), t.exp(value))(t.liftPos(this))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
@@ -404,15 +432,17 @@ case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExten
   }
 }
 
-case class PGuard(lockType: PIdnUse, guardName: PIdnUse, lockRef: PExp) extends PExtender with PExp {
-  override def forceSubstitution(ts: PTypeSubstitution): Unit = ???
+case class PGuard(lockType: PIdnUse, guardName: PIdnUse, lockRef: PExp) extends PExtender with POpApp {
+  override def args: Seq[PExp] = Seq(lockRef)
 
-  override def typeSubstitutions: Seq[PTypeSubstitution] = ???
+  override def opName: String = "guard"
+
+  override def signatures = ???
 
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef)
 
   override def translateExp(t: Translator): Exp = {
-    Guard(lockType.name, guardName.name, t.exp(lockRef))()
+    Guard(lockType.name, guardName.name, t.exp(lockRef))(t.liftPos(this))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
@@ -493,7 +523,7 @@ case class PFork(method: PIdnUse, target: PIdnUse, args: Seq[PExp]) extends PExt
   }
 
   override def translateStmt(t: Translator): Stmt = {
-    Fork(method.name, t.exp(target).asInstanceOf[LocalVar], args map (t.exp(_)))()
+    Fork(method.name, t.exp(target).asInstanceOf[LocalVar], args map (t.exp(_)))(t.liftPos(this))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -530,7 +560,7 @@ case class PJoin(method: PIdnUse, resVars: Seq[PIdnUse], token: PExp) extends PE
   }
 
   override def translateStmt(t: Translator): Stmt = {
-    Join(method.name, resVars map (t.exp(_).asInstanceOf[LocalVar]), t.exp(token))()
+    Join(method.name, resVars map (t.exp(_).asInstanceOf[LocalVar]), t.exp(token))(t.liftPos(this))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -558,7 +588,7 @@ case class PNewLock(lockType: PIdnUse, target: PIdnUse, fields: Seq[PIdnUse]) ex
   }
 
   override def translateStmt(t: Translator): Stmt = {
-    NewLock(lockType.name, LocalVar(target.name, t.ttyp(target.typ))(), fields map (f => Field(f.name, t.ttyp(f.typ))()))()
+    NewLock(lockType.name, LocalVar(target.name, t.ttyp(target.typ))(), fields map (f => Field(f.name, t.ttyp(f.typ))()))(t.liftPos(this))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -578,7 +608,7 @@ case class PAcquire(lockType: PIdnUse, lockExp: PExp) extends PExtender with PSt
   }
 
   override def translateStmt(t: Translator): Stmt = {
-    Acquire(lockType.name, t.exp(lockExp))()
+    Acquire(lockType.name, t.exp(lockExp))(t.liftPos(this))
   }
 
   override def transform(go: PNode => PNode): PExtender = {
@@ -590,7 +620,7 @@ case class PRelease(lockType: PIdnUse, lockExp: PExp, action: Option[(PIdnUse, P
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockExp) ++ (if (action.isDefined) Seq(action.get._1, action.get._2) else Seq())
 
   override def translateStmt(t: Translator): Stmt = {
-    Release(lockType.name, t.exp(lockExp), if (action.isDefined) Some((action.get._1.name, t.exp(action.get._2))) else None)()
+    Release(lockType.name, t.exp(lockExp), if (action.isDefined) Some((action.get._1.name, t.exp(action.get._2))) else None)(t.liftPos(this))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {

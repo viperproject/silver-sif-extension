@@ -2,12 +2,13 @@ package commutativity
 
 import viper.silver.ast.utility.{Expressions, QuantifiedPermissions}
 import viper.silver.ast.utility.rewriter.Traverse
-import viper.silver.ast.{And, Assert, Bool, CondExp, CurrentPerm, EqCmp, Exhale, Exp, FieldAccess, FieldAccessPredicate, Forall, FullPerm, FuncApp, Function, Implies, Inhale, Let, LocalVar, LocalVarDecl, Method, MethodCall, NoPerm, NoTrafos, NodeTrafo, Not, PermGeCmp, PermGtCmp, Predicate, PredicateAccess, PredicateAccessPredicate, Program, Ref, Result, Seqn, Stmt, TrueLit, Type, WildcardPerm}
+import viper.silver.ast.{And, Assert, Bool, CondExp, CurrentPerm, EqCmp, ErrTrafo, Exhale, Exp, FieldAccess, FieldAccessPredicate, Forall, FullPerm, FuncApp, Function, Implies, Inhale, Let, LocalVar, LocalVarDecl, Method, MethodCall, NoPerm, NoTrafos, NodeTrafo, Not, Perm, PermGeCmp, PermGtCmp, Predicate, PredicateAccess, PredicateAccessPredicate, Program, Ref, Result, Seqn, Stmt, Trafos, TrueLit, Type, WildcardPerm}
 import viper.silver.parser.FastParser._
 import viper.silver.parser._
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
 import viper.silver.sif.{SIFExtendedTransformer, SIFLowEventExp}
 import viper.silver.verifier._
+import viper.silver.verifier.errors.PostconditionViolated
 
 import scala.collection.mutable.ListBuffer
 import scala.collection.{Set, mutable}
@@ -78,17 +79,20 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
     case (ptype, actions, params, pstmt) => PProof(ptype, actions, params, PSeqn(pstmt))
   }
   lazy val proofType : P[String] = P("reordering".! | "commutativity".! | "preservation".!)
-
-  lazy val pointsToPred : P[PPointsToPredicate] = P("[" ~ fieldAcc ~ ("|->" | ("|-[" ~ term ~ "]->")) ~ pointsToRhs ~ "]").map{
+  lazy val pointsToPred : P[PExp] = P(pointsToPred1 | pointsToPred2)
+  lazy val pointsToPred1 : P[PSimplePointsToPredicate] = P("[" ~ fieldAcc ~ ("|->" | ("|-[" ~ term ~ "]->")) ~ (anyVal | atom) ~ "]").map{
     case (fa, p, rhs) => {
       val perm = if (p.isInstanceOf[PExp]) p.asInstanceOf[PExp] else PFullPerm()
-      PPointsToPredicate(fa, perm, rhs)
+      PSimplePointsToPredicate(fa, perm, rhs)
     }
   }
-  lazy val pointsToRhs : P[PNode] = P(anyVal | definingVar | atom)
-  lazy val definingVar : P[PLetNestedScope] = P("?" ~ idndef ~ "&&" ~ exp).map{
-    case (i, b) => PLetNestedScope(PFormalArgDecl(i, PPrimitiv("Ref")), b)
+  lazy val pointsToPred2 : P[PVarDefiningPointsToPredicate] = P("[" ~ fieldAcc ~ ("|->" | ("|-[" ~ term ~ "]->")) ~ "?" ~ idndef ~ "&&" ~ exp ~ "]").map{
+    case (fa, p, id, body) => {
+      val perm = if (p.isInstanceOf[PExp]) p.asInstanceOf[PExp] else PFullPerm()
+      PVarDefiningPointsToPredicate(fa, perm, PLet(fa, PLetNestedScope(PFormalArgDecl(id, PPrimitiv("Ref")), body)))
+    }
   }
+
   lazy val anyVal : P[PExp] = P("_").map{case _ => PAnyVal()}
   lazy val joinable : P[PJoinable] = P(keyword("joinable") ~/ "[" ~ idnuse ~ "]" ~ parens(exp.rep(min=1, sep=","))).map{
     case (method, args) => PJoinable(method, args(0), args.tail)
@@ -243,9 +247,12 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
         val valDef2 = inv.pureWithArgs(Seq(udLockVar.localVar, udVal2.localVar))
 
         // assert same var
-        val sameVal = EqCmp(udVal1.localVar, udVal2.localVar)()
+        val uniquenessTrafo = ErrTrafo({
+          case PostconditionViolated(node, _, reason, _) => UniquenessCheckFailed(name, node, reason)
+        })
+        val sameVal = EqCmp(udVal1.localVar, udVal2.localVar)(l.pos, errT=uniquenessTrafo)
 
-        val udMethod = Method("$udCheck$" + name + "$" + getFreshInt(), Seq(udLockVar, udVal1, udVal2), Seq(), Seq(perms, valDef1, valDef2), Seq(sameVal), Some(Seqn(Seq(), Seq())()))()
+        val udMethod = Method("$udCheck$" + name + "$" + getFreshInt(), Seq(udLockVar, udVal1, udVal2), Seq(), Seq(perms, valDef1, valDef2), Seq(sameVal), Some(Seqn(Seq(), Seq())()))(l.pos, errT=uniquenessTrafo)
         newMethods.append(udMethod)
 
         for (a <- actions){
@@ -268,6 +275,9 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
           val presRetValEq = EqCmp(presRetVar.localVar, presRetVal)()
 
           // assert post and secinv
+          val preservationTrafo = ErrTrafo({
+            case PostconditionViolated(node, _, reason, _) => PreservationCheckFailed(a.name, node, reason)
+          })
           val presPostcond = a.post.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar).replace(Result(a.retType)(), presRetVar.localVar)
           val presSecInvFinal = secInv.withArgs(Seq(presFinalVar.localVar))
           val presProof = proofs.find(p => p.proofType == "preservation" && p.actions.length == 1 && p.actions(0) == a.name)
@@ -275,7 +285,10 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
             case None => Some(Seqn(Seq(), Seq())())
             case Some(p) => Some(p.body.replace(a.params(0).localVar, presOrigVar.localVar).replace(a.params(1).localVar, presArgVar.localVar))
           }
-          val presMethod = Method("$presCheck$" + getFreshInt(), Seq(presOrigVar, presArgVar, presFinalVar, presRetVar), Seq(), Seq(presSecInv, presPrecond, presFinalValEq, presRetValEq), Seq(presPostcond, presSecInvFinal), presBody)()
+          val presPosts = Seq((presPostcond, a.post), (presSecInvFinal, secInv.inv)).map{case (p: Exp, po: Exp) => EqCmp(TrueLit()(), p)(a.pos, errT=Trafos(List({
+            case PostconditionViolated(node, _, reason, _) => PreservationCheckFailed(a.name, node, reason)
+          }), List(), Some(po)))}
+          val presMethod = Method("$presCheck$" + getFreshInt(), Seq(presOrigVar, presArgVar, presFinalVar, presRetVar), Seq(), Seq(presSecInv, presPrecond, presFinalValEq, presRetValEq), presPosts, presBody)(a.pos, errT=preservationTrafo)
           newMethods.append(presMethod)
 
           ////// (optional) precondition implies welldef of newVal
@@ -306,15 +319,20 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
               val reoOpt1Pre1 = a1.pre.replace(a1.params(0).localVar, reoTmpOpt1Decl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar)
 
               // opt2 pres hold
-              val reoOpt2Pre1 = a1.pre.replace(a1.params(0).localVar, reoOrigDecl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar)
-              val reoOpt2TmpDef = EqCmp(reoTmpOpt2Decl.localVar, a1.newVal.replace(a1.params(0).localVar, reoOrigDecl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar))()
+              val reorderingTrafo = ErrTrafo({
+                case PostconditionViolated(node, _, reason, _) => ReorderingCheckFailed(a1.name, a2.name, node, reason)
+              })
+              val reoOpt2Pre1: Exp = a1.pre.replace(a1.params(0).localVar, reoOrigDecl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar)
+              val reoOpt2TmpDef = EqCmp(reoTmpOpt2Decl.localVar, a1.newVal.replace(a1.params(0).localVar, reoOrigDecl.localVar).replace(a1.params(1).localVar, reoArg1Decl.localVar))(a1.pos, errT=reorderingTrafo)
               val reoOpt2Pre2 = a2.pre.replace(a2.params(0).localVar, reoTmpOpt2Decl.localVar).replace(a2.params(1).localVar, reoArg2Decl.localVar)
-              val reoOpt2Pre2Impl = Implies(reoOpt2TmpDef, reoOpt2Pre2)()
+              val reoOpt2Pre2Impl = Implies(reoOpt2TmpDef, reoOpt2Pre2)(a1.pos, errT=reorderingTrafo)
 
               val reoName = "$reoCheck$" + a1.name + "$" + a2.name + "$" + getFreshInt()
               val reoParams = Seq(reoOrigDecl, reoArg1Decl, reoArg2Decl, reoTmpOpt1Decl, reoTmpOpt2Decl)
               val reoPres = Seq(reoOrigSecInv, reoOpt1Pre2, reoOpt1TmpDef, reoOpt1Pre1)
-              val reoPosts = Seq(reoOpt2Pre1, reoOpt2Pre2Impl)
+              val reoPosts = Seq((reoOpt2Pre1, a1.pre), (reoOpt2Pre2Impl, a2.pre)).map{case (p, po) => EqCmp(TrueLit()(), p)(a1.pos, errT=Trafos(List({
+                case PostconditionViolated(node, _, reason, _) => ReorderingCheckFailed(a1.name, a2.name, node, reason)
+              }), List(), Some(po)))}
 
               val reoProof = proofs.find(p => p.proofType == "reordering" && p.actions(0) == a1.name && p.actions(1) == a2.name)
               val reoBody = if (reoProof.isDefined){
@@ -322,7 +340,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
               }else{
                 Seqn(Seq(), Seq())()
               }
-              val reoMethod = Method(reoName, reoParams, Seq(), reoPres, reoPosts, Some(reoBody))()
+              val reoMethod = Method(reoName, reoParams, Seq(), reoPres, reoPosts, Some(reoBody))(a1.pos, errT=reorderingTrafo)
               newMethods.append(reoMethod)
 
 
@@ -364,14 +382,20 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
               val commOptions = CondExp(commChoiceDecl.localVar, commOpt1, commOpt2)()
 
               // checks
+              val commutativityTrafo = ErrTrafo({
+                case PostconditionViolated(node, _, reason, _) => CommutativityCheckFailed(a1.name, a2.name, node, reason)
+              })
               val commCheckSecInv = secInv.withArgs(Seq(commFinalDecl.localVar))
               val commCheckPostA1 = a1.post.replace(a1.params(0).localVar, commOrig1Decl.localVar).replace(a1.params(1).localVar, commArg1Decl.localVar).replace(Result(a1.retType)(), commRet1Decl.localVar)
               val commCheckPostA2 = a2.post.replace(a2.params(0).localVar, commOrig2Decl.localVar).replace(a2.params(1).localVar, commArg2Decl.localVar).replace(Result(a2.retType)(), commRet2Decl.localVar)
 
+
               val commName = "$commCheck$" + a1.name + "$" + a2.name + "$" + getFreshInt()
               val commParams = Seq(commOrigDecl, commFinalDecl, commChoiceDecl, commOrig1Decl, commOrig2Decl, commArg1Decl, commArg2Decl, commRes1Decl, commRes2Decl, commRet1Decl, commRet2Decl)
               val commPres = Seq(commPreA1, commPreA2, commOrigSecInv, commResA1, commResA2, commRetA1, commRetA2, commOptions)
-              val commPosts = Seq(commCheckSecInv, commCheckPostA1, commCheckPostA2)
+              val commPosts = Seq((commCheckSecInv, secInv.inv), (commCheckPostA1, a1.post), (commCheckPostA2, a2.post)).map{case (p, po) => EqCmp(TrueLit()(), p)(a1.pos, errT=Trafos(List({
+                case PostconditionViolated(node, _, reason, _) => CommutativityCheckFailed(a1.name, a2.name, node, reason)
+              }), List(), Some(po)))}
 
               val commProof = proofs.find(p => p.proofType == "commutativity" && p.actions(0) == a1.name && p.actions(1) == a2.name)
               val commBody = if (commProof.isDefined){
@@ -379,7 +403,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
               }else{
                 Seqn(Seq(), Seq())()
               }
-              val commMethod = Method(commName, commParams, Seq(), commPres, commPosts, Some(commBody))()
+              val commMethod = Method(commName, commParams, Seq(), commPres, commPosts, Some(commBody))(a1.pos, errT=commutativityTrafo)
               newMethods.append(commMethod)
             }
           }
@@ -390,37 +414,39 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
     val withAdded = input.copy(extensions = Seq(), predicates = newPredicates, functions = newFunctions, methods = newMethods)(input.pos, input.info, input.errT)
 
     val res = withAdded.transform({
-      case pt@PointsToPredicate(fa, p, None) => FieldAccessPredicate(fa, p)()
-      case pt@PointsToPredicate(fa, p, Some(e)) => And(FieldAccessPredicate(fa, p)(), EqCmp(fa, e)())()
-      case pt@VarDefiningPointsToPredicate(fa, p, v, Some(b)) => And(FieldAccessPredicate(fa, p)(errT=NodeTrafo(pt)), Let(v, fa, b)(errT=NodeTrafo(pt)))(errT = NodeTrafo(pt))
-      case pt@VarDefiningPointsToPredicate(fa, p, v, None) => FieldAccessPredicate(fa, p)()
-      case Joinable(m, e, args) => {
+      case pt@PointsToPredicate(fa, p, None) => FieldAccessPredicate(fa, p)(pt.pos, errT=NodeTrafo(pt))
+      case pt@PointsToPredicate(fa, p, Some(e)) => And(FieldAccessPredicate(fa, p)(), EqCmp(fa, e)(pt.pos, errT=NodeTrafo(pt)))(pt.pos, errT=NodeTrafo(pt))
+      case pt@VarDefiningPointsToPredicate(fa, p, v, Some(b)) => And(FieldAccessPredicate(fa, p)(pt.pos, errT=NodeTrafo(pt)), Let(v, fa, b)(pt.pos, errT=NodeTrafo(pt)))(pt.pos, errT=NodeTrafo(pt))
+      case pt@VarDefiningPointsToPredicate(fa, p, v, None) => FieldAccessPredicate(fa, p)(pt.pos, errT=NodeTrafo(pt))
+      case pt@Joinable(m, e, args) => {
         val pa = PredicateAccess(Seq(e), joinableNames.get(m).get)()
-        val pap = PredicateAccessPredicate(pa, FullPerm()())()
+        val pap = PredicateAccessPredicate(pa, FullPerm()())(pt.pos, errT=NodeTrafo(pt))
         var res : Exp =  pap
         for (i <- 0 until args.length){
-          val funcApp = EqCmp(FuncApp(joinableFunctions.get(m).get(i), Seq(e))(), args(i))()
-          res = And(res, funcApp)()
+          val funcApp = EqCmp(FuncApp(joinableFunctions.get(m).get(i), Seq(e))(pt.pos, errT=NodeTrafo(pt)), args(i))(pt.pos, errT=NodeTrafo(pt))
+          res = And(res, funcApp)(pt.pos, errT=NodeTrafo(pt))
         }
         res
       }
-      case Lock(lt, r, amount) => {
+      case pt@Lock(lt, r, amount) => {
         val pa = PredicateAccess(Seq(r), lockPredNames.get(lt).get)()
-        PredicateAccessPredicate(pa, amount)()
+        PredicateAccessPredicate(pa, amount)(pt.pos, errT=NodeTrafo(pt))
       }
       case l@Locked(lt, r, value) => {
+        val pt = l
         val pa = PredicateAccess(Seq(r), lockedPredNames.get(lt).get)()
-        val pap = PredicateAccessPredicate(pa, FullPerm()())()
+        val pap = PredicateAccessPredicate(pa, FullPerm()())(pt.pos, errT=NodeTrafo(pt))
         val funcApp = FuncApp(lockedFuncNames.get(lt).get, Seq(r))(l.pos, l.info, lockSpecs.get(lt).get.t, NoTrafos)
-        val eq = EqCmp(funcApp, value)()
-        And(pap, eq)()
+        val eq = EqCmp(funcApp, value)(pt.pos, errT=NodeTrafo(pt))
+        And(pap, eq)(pt.pos, errT=NodeTrafo(pt))
       }
-      case Guard(lt, g, lock) => {
+      case pt@Guard(lt, g, lock) => {
         val action = lockSpecs.get(lt).get.actions.find(a => a.name == g).get
         val pa = PredicateAccess(Seq(lock), actionGuardNames.get(lt).get.get(g).get)()
-        PredicateAccessPredicate(pa, if (action.duplicable) WildcardPerm()() else FullPerm()())()
+        PredicateAccessPredicate(pa, if (action.duplicable) WildcardPerm()() else FullPerm()())(pt.pos, errT=NodeTrafo(pt))
       }
       case nl@NewLock(lt, target, fields) => {
+        val pt = nl
         val lockSpec = lockSpecs.get(lt).get
         val newStmt = MethodCall(havocNames.get(Ref).get, Seq(), Seq(target))(nl.pos, nl.info, NoTrafos)
         val fp = FullPerm()()
@@ -433,29 +459,33 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
         val lockPred = PredicateAccessPredicate(lockPredAcc, fp)()
         val bottomApp = FuncApp(bottomFuncNames.get(lt).get, Seq())(nl.pos, nl.info, lockSpecs.get(lt).get.t, NoTrafos)
         val lockedPredAcc = PredicateAccess(Seq(target), lockedPredNames.get(lt).get)()
-        val lockedPred = PredicateAccessPredicate(lockedPredAcc, fp)()
+        val lockedPred = PredicateAccessPredicate(lockedPredAcc, fp)(pt.pos, errT=NodeTrafo(pt))
         val lockedValue = FuncApp(lockedFuncNames.get(lt).get, Seq(target))(nl.pos, nl.info, lockSpec.t, NoTrafos)
-        val lockedBottom = EqCmp(lockedValue, bottomApp)()
-        val inhale = Inhale(And(lockPred, And(lockedPred, lockedBottom)())())()
+        val lockedBottom = EqCmp(lockedValue, bottomApp)(pt.pos, errT=NodeTrafo(pt))
+        val inhale = Inhale(And(lockPred, And(lockedPred, lockedBottom)(pt.pos, errT=NodeTrafo(pt)))(pt.pos, errT=NodeTrafo(pt)))(pt.pos, errT=NodeTrafo(pt))
         val guardInhales = ListBuffer[Inhale]()
         val guardNames = actionGuardNames.get(lt).get
         for (a <- lockSpec.actions){
           val pa = PredicateAccess(Seq(target), guardNames.get(a.name).get)()
-          guardInhales.append(Inhale(PredicateAccessPredicate(pa, fp)())())
+          guardInhales.append(Inhale(PredicateAccessPredicate(pa, fp)(pt.pos, errT=NodeTrafo(pt)))(pt.pos, errT=NodeTrafo(pt)))
         }
-        Seqn(Seq(newStmt, inhale) ++ fieldPermInhales ++ guardInhales, Seq())()
+        Seqn(Seq(newStmt, inhale) ++ fieldPermInhales ++ guardInhales, Seq())(pt.pos, errT=NodeTrafo(pt))
       }
       case a@Acquire(lt, lockExp) => {
         val lockSpec = lockSpecs.get(lt).get
         val invValVarName = "$invVal$" + getFreshInt()
         val invValVarDecl = LocalVarDecl(invValVarName, lockSpec.t)()
+        val lockPredAcc = PredicateAccess(Seq(lockExp), lockPredNames.get(lt).get)()
+        val lockPerm = CurrentPerm(lockPredAcc)()
+        // check lock type
+        val errTrafo = NodeTrafo(Lock(lt, lockExp, AnyVal(Perm)())(a.pos))
+        val anyLockPerm = PermGtCmp(lockPerm, NoPerm()())(a.pos, errT=errTrafo)
+        val checkSomeLockPerm = Assert(anyLockPerm)(a.pos)
         // inhale inv
         val inv = lockSpec.invariant.withArgs(Seq(lockExp, invValVarDecl.localVar))
         val inhaleInv = Inhale(inv)()
         // if full lock perm inhale secinv
         val secInv = lockSpec.secInv.withArgs(Seq(invValVarDecl.localVar))
-        val lockPredAcc = PredicateAccess(Seq(lockExp), lockPredNames.get(lt).get)()
-        val lockPerm = CurrentPerm(lockPredAcc)()
         val hasFullLockPerm = PermGeCmp(lockPerm, FullPerm()())()
         val inhaleSecInv = Inhale(Implies(hasFullLockPerm, secInv)())()
         // inhale locked
@@ -463,68 +493,72 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
         val lockedPredAcc = PredicateAccessPredicate(lockedAccess, FullPerm()())()
         val lockedValFuncApp = FuncApp(lockedFuncNames.get(lt).get, Seq(lockExp))(a.pos, a.info, lockSpec.t, NoTrafos)
         val inhaleLocked = Inhale(And(lockedPredAcc, EqCmp(lockedValFuncApp, invValVarDecl.localVar)())())()
-        Seqn(Seq(inhaleInv, inhaleSecInv, inhaleLocked), Seq(invValVarDecl))(errT=NodeTrafo(a))
+        Seqn(Seq(checkSomeLockPerm, inhaleInv, inhaleSecInv, inhaleLocked), Seq(invValVarDecl))(errT=NodeTrafo(a))
       }
       case r@Release(lt, lockExp, opAction) => {
         val lockSpec = lockSpecs.get(lt).get
         val invValVarName = "$invVal$" + getFreshInt()
         val invValVarDecl = LocalVarDecl(invValVarName, lockSpec.t)()
         val invPerms = lockSpec.invariant.permissionsWithArgs(Seq(lockExp, invValVarDecl.localVar))
-        val assertInvPerms = Assert(invPerms)()
-        val exhaleInvPerms = Exhale(invPerms)()
+        val assertInvPerms = Assert(invPerms)(r.pos)
+        val exhaleInvPerms = Exhale(invPerms)(r.pos)
         val valueDefinition = Inhale(lockSpec.invariant.pureWithArgs(Seq(lockExp, invValVarDecl.localVar)))()
 
         // either bottom or unchanged
         val bottomApp = FuncApp(bottomFuncNames.get(lt).get, Seq())(r.pos, r.info, lockSpecs.get(lt).get.t, NoTrafos)
         val fp = FullPerm()()
-        val lockedPred = PredicateAccessPredicate(PredicateAccess(Seq(lockExp), lockedPredNames.get(lt).get)(), fp)()
+        val lockedTrafo = NodeTrafo(Locked(lt, lockExp, AnyVal(lockSpec.t)())(r.pos))
+        val lockedPred = PredicateAccessPredicate(PredicateAccess(Seq(lockExp), lockedPredNames.get(lt).get)(), fp)(r.pos, errT=lockedTrafo)
         val lockedVal = FuncApp(lockedFuncNames.get(lt).get, Seq(lockExp))(r.pos, r.info, lockSpec.t, NoTrafos)
-        val assertLocked = Assert(lockedPred)()
-        val exhaleLocked = Exhale(lockedPred)()
+        val assertLocked = Assert(lockedPred)(r.pos)
+        val exhaleLocked = Exhale(lockedPred)(r.pos)
+        // assert perm(lock(lockExp)) > 0
+        val lockTrafo = NodeTrafo(Lock(lt, lockExp, AnyVal(Perm)())(r.pos))
+        val lockPredAcc = PredicateAccess(Seq(lockExp), lockPredNames.get(lt).get)()
+        val hasLockPerm = PermGtCmp(CurrentPerm(lockPredAcc)(), NoPerm()())(r.pos, errT=lockTrafo)
+        val assertLockPerm = Assert(hasLockPerm)(r.pos)
 
 
         val (actionChecks: Seq[Stmt], actionDecls: Seq[LocalVarDecl]) = opAction match {
           case None => {
             val hasCurrentLocked = EqCmp(lockedVal, invValVarDecl.localVar)()
-            val toExhaleIfBottom = And(EqCmp(lockedVal, bottomApp)(), lockSpec.secInv.withArgs(Seq(invValVarDecl.localVar)))()
+            val bottomTrafo = NodeTrafo(Locked(lt, lockExp, BottomVal(lockSpec.t)(r.pos))(r.pos))
+            val toExhaleIfBottom = And(EqCmp(lockedVal, bottomApp)(r.pos, errT=bottomTrafo), lockSpec.secInv.withArgs(Seq(invValVarDecl.localVar)))(r.pos)
 
-            val lockedValueToAssert = Implies(Not(hasCurrentLocked)(), toExhaleIfBottom)()
-            val assertValue = Assert(lockedValueToAssert)()
+            val lockedValueToAssert = Implies(Not(hasCurrentLocked)(), toExhaleIfBottom)(r.pos)
+            val assertValue = Assert(lockedValueToAssert)(r.pos)
             val stmtSeq = Seq(assertValue)
             (stmtSeq, Seq())
           }
           case Some((actionName, actionArg)) => {
             val action = lockSpec.actions.find(a => a.name == actionName).get
             // assert LowEvent
-            val checkLowEvent = Assert(SIFLowEventExp()())()
-            // assert perm(lock(lockExp)) > 0
-            val lockPredAcc = PredicateAccess(Seq(lockExp), lockPredNames.get(lt).get)()
-            val hasLockPerm = PermGtCmp(CurrentPerm(lockPredAcc)(), NoPerm()())()
-            val assertLockPerm = Assert(hasLockPerm)()
+            val checkLowEvent = Assert(SIFLowEventExp()())(r.pos)
             // assert perm(guard(action, lockExp)) >= 1
+            val guardTrafo = NodeTrafo(Guard(lt, actionName, lockExp)(r.pos))
             val guardPredAcc = PredicateAccess(Seq(lockExp), actionGuardNames.get(lt).get.get(actionName).get)()
-            val hasGuardPerm = if (action.duplicable) PermGtCmp(CurrentPerm(guardPredAcc)(), NoPerm()())() else PermGeCmp(CurrentPerm(guardPredAcc)(), fp)()
-            val assertGuardPerm = Assert(hasGuardPerm)()
+            val hasGuardPerm = if (action.duplicable) PermGtCmp(CurrentPerm(guardPredAcc)(), NoPerm()())(r.pos, errT=guardTrafo) else PermGeCmp(CurrentPerm(guardPredAcc)(), fp)(r.pos, errT=guardTrafo)
+            val assertGuardPerm = Assert(hasGuardPerm)(r.pos)
             // var oldVal
             val oldValVarName = "$oldVal$" + getFreshInt()
             val oldValVarDecl = LocalVarDecl(oldValVarName, lockSpec.t)()
-            val oldVarDef = Inhale(EqCmp(oldValVarDecl.localVar, lockedVal)())()
+            val oldVarDef = Inhale(EqCmp(oldValVarDecl.localVar, lockedVal)())(r.pos)
             // exhale       actionPre(oldVal, arg)
             //              current == actionFunc(oldVal, arg) &&
             //              locked(lockExp, oldVal)
-            val assertActionPre = Assert(action.pre.replace(action.params(0).localVar, oldValVarDecl.localVar).replace(action.params(1).localVar, actionArg))()
+            val assertActionPre = Assert(action.pre.replace(action.params(0).localVar, oldValVarDecl.localVar).replace(action.params(1).localVar, actionArg))(r.pos)
             val actionNewVal = action.newVal.replace(action.params(0).localVar, oldValVarDecl.localVar).replace(action.params(1).localVar, actionArg)
-            val assertCurrentIsNewVal = Assert(EqCmp(actionNewVal, invValVarDecl.localVar)())()
+            val assertCurrentIsNewVal = Assert(EqCmp(actionNewVal, invValVarDecl.localVar)(r.pos))(r.pos)
             // inhale post(oldVal, arg, actionFunc(oldVal, arg))
             val retVal = action.returnVal.replace(action.params(0).localVar, oldValVarDecl.localVar).replace(action.params(1).localVar, actionArg)
             val post = action.post.replace(action.params(0).localVar, oldValVarDecl.localVar).replace(action.params(1).localVar, actionArg).replace(Result(action.retType)(), retVal)
-            val inhalePost = Inhale(post)()
-            val stmtSeq = Seq(checkLowEvent, assertLockPerm, assertGuardPerm, oldVarDef, assertActionPre, assertCurrentIsNewVal, inhalePost)
+            val inhalePost = Inhale(post)(r.pos)
+            val stmtSeq = Seq(checkLowEvent, assertGuardPerm, oldVarDef, assertActionPre, assertCurrentIsNewVal, inhalePost)
             (stmtSeq, Seq(oldValVarDecl))
           }
         }
 
-        Seqn(Seq(assertInvPerms, assertLocked, valueDefinition, exhaleInvPerms) ++ actionChecks ++ Seq(exhaleLocked), Seq(invValVarDecl) ++ actionDecls)()
+        Seqn(Seq(assertInvPerms, assertLocked, assertLockPerm, valueDefinition, exhaleInvPerms) ++ actionChecks ++ Seq(exhaleLocked), Seq(invValVarDecl) ++ actionDecls)(r.pos)
       }
       case f@Fork(m, token, args) => {
         val havocToken = MethodCall(havocNames.get(Ref).get, Seq(), Seq(token))(f.pos, f.info, NoTrafos)
@@ -533,23 +567,23 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
         for (i <- 0 until args.length){
           pres = pres.map(pre => pre.replace(method.formalArgs(i).localVar, args(i)))
         }
-        val exhalePres = pres.map(pre => Exhale(pre)())
-        var joinablePred : Exp = PredicateAccessPredicate(PredicateAccess(Seq(token), joinableNames.get(m).get)(), FullPerm()())()
+        val exhalePres = pres.map(pre => Exhale(pre)(f.pos))
+        var joinablePred : Exp = PredicateAccessPredicate(PredicateAccess(Seq(token), joinableNames.get(m).get)(), FullPerm()())(f.pos)
         for (i <- 0 until args.length) {
-          val funcApp = FuncApp(joinableFunctions.get(m).get(i), Seq(token))()
-          val eq = EqCmp(funcApp, args(i))()
-          joinablePred = And(joinablePred, eq)()
+          val funcApp = FuncApp(joinableFunctions.get(m).get(i), Seq(token))(f.pos)
+          val eq = EqCmp(funcApp, args(i))(f.pos)
+          joinablePred = And(joinablePred, eq)(f.pos)
         }
-        val inhaleJoinable = Inhale(joinablePred)()
-        Seqn(exhalePres ++ Seq(havocToken, inhaleJoinable), Seq())()
+        val inhaleJoinable = Inhale(joinablePred)(f.pos)
+        Seqn(exhalePres ++ Seq(havocToken, inhaleJoinable), Seq())(f.pos)
       }
       case j@Join(m, resVars, token) => {
         val method = input.findMethod(m)
         val havocTargets = ListBuffer[MethodCall]()
         var posts = method.posts
-        var argDefinition : Exp = TrueLit()()
         val joinablePred = PredicateAccess(Seq(token), joinableNames.get(m).get)()
-        val assertJoinable = Assert(PredicateAccessPredicate(joinablePred, FullPerm()())())()
+        val joinableTrafo = NodeTrafo(Joinable(m, token, method.formalArgs.map(fa => AnyVal(fa.typ)()))(j.pos))
+        val assertJoinable = Assert(PredicateAccessPredicate(joinablePred, FullPerm()())(j.pos, errT=joinableTrafo))(j.pos)
         for (i <- 0 until resVars.length){
           val havocCall =  MethodCall(havocNames.get(resVars(i).typ).get, Seq(), Seq(resVars(i)))(j.pos, j.info, NoTrafos)
           havocTargets.append(havocCall)
@@ -559,10 +593,9 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
           val argFuncApp = FuncApp(joinableFunctions.get(m).get(i), Seq(token))()
           posts = posts.map(post => post.replace(method.formalArgs(i).localVar, argFuncApp))
         }
-        val defineArgVars = Inhale(argDefinition)()
         val exhaleJoinable = Exhale(PredicateAccessPredicate(joinablePred, FullPerm()())())()
         val inhalePosts = posts.map(post => Inhale(post)())
-        Seqn(Seq(assertJoinable, defineArgVars) ++ havocTargets ++ inhalePosts ++ Seq(exhaleJoinable), Seq())()
+        Seqn(Seq(assertJoinable) ++ havocTargets ++ inhalePosts ++ Seq(exhaleJoinable), Seq())(j.pos)
       }
       //case Threadtype() => Ref
       //case Locktype() => Ref
@@ -570,7 +603,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
 
 
     val productRes = SIFExtendedTransformer.transform(res, false)
-    println(productRes)
+    //println(productRes)
     val qpTransformed = productRes.transform({
       case fa: Forall => {
         if (fa.isPure) {

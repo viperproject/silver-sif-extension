@@ -3,7 +3,7 @@ package viper.silver.sif
 import viper.silver.ast._
 import viper.silver.ast.utility.Simplifier
 import viper.silver.verifier.errors
-import viper.silver.verifier.errors.AssertFailed
+import viper.silver.verifier.errors.{AssertFailed, ErrorNode}
 
 import scala.collection.immutable.HashSet
 import scala.collection.mutable
@@ -1102,11 +1102,11 @@ object SIFExtendedTransformer {
             p2 = ctrlVars.activeExecNoContPrime(Some(p2)))
           case _ => ctx.copy(p1 = act1, p2 = act2)
         }
-        Assert(translateSIFAss(e1, newCtx))(s.pos, errT= NodeTrafo(s))
+        Assert(translateSIFAss(e1, newCtx))(s.pos, errT= fwTs(s, s))
       case i@Inhale(FalseLit()) => i
-      case Assume(e1) => Assume(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= NodeTrafo(s))
-      case Inhale(e1) => Inhale(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= NodeTrafo(s))
-      case Exhale(e1) => Exhale(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= NodeTrafo(s))
+      case Assume(e1) => Assume(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= fwTs(s, s))
+      case Inhale(e1) => Inhale(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= fwTs(s, s))
+      case Exhale(e1) => Exhale(translateSIFAss(e1, ctx.copy(p1 = act1, p2 = act2)))(s.pos, errT= fwTs(s, s))
       case d : LocalVarDeclStmt => d
       case u@Unfold(acc) =>
         val predicate2 = PredicateAccess(acc.loc.args.map(a => translatePrime(a, p1, p2)),
@@ -1243,14 +1243,14 @@ object SIFExtendedTransformer {
 
   def translateSIFExp1(e: Exp, p1: Exp, p2: Exp): Exp = {
     e match {
-      case re if isRelational(e) => Implies(And(p1, p2)(), translateNormal(e, p1, p2))(e.pos, errT = NodeTrafo(re))
+      case re if isRelational(e) => Implies(And(p1, p2)(), translateNormal(e, p1, p2))(e.pos, errT = fwTs(re, re))
       case re if isUnary(e) => translateNormal(e, p1, p2)
     }
   }
 
   def translateSIFExp2(e: Exp, p1: Exp, p2: Exp): Exp = {
     e match {
-      case re if isRelational(e) => TrueLit()(e. pos, errT = NodeTrafo(re))
+      case re if isRelational(e) => TrueLit()(e. pos, errT = fwTs(re, re))
       case _ => translatePrime(e, p1, p2)
     }
   }
@@ -1258,14 +1258,18 @@ object SIFExtendedTransformer {
   def translateSIFLowExpComparison(l: SIFLowExp, p1: Exp, p2: Exp): Exp = {
     val primedExp = translatePrime(l.exp, p1, p2)
     l.comparator match {
-      case None => EqCmp(l.exp, primedExp)(l.pos, errT = NodeTrafo(l))
-      case Some(str) => FuncApp(str, Seq(l.exp, primedExp))(l.pos, l.info, Bool, errT = NodeTrafo(l))
+      case None => EqCmp(l.exp, primedExp)(l.pos, errT = fwTs(l, l))
+      case Some(str) => FuncApp(str, Seq(l.exp, primedExp))(l.pos, l.info, Bool, errT = fwTs(l, l))
     }
   }
 
   def translateAssDefault(e: Exp, p1: Exp, p2: Exp): And = {
-    And(Implies(p1, translateSIFExp1(e, p1, p2))(e.pos, errT = NodeTrafo(e)),
-      Implies(p2, translateSIFExp2(e, p1, p2))(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
+    And(Implies(p1, translateSIFExp1(e, p1, p2))(e.pos, errT = fwTs(e, e)),
+      Implies(p2, translateSIFExp2(e, p1, p2))(e.pos, errT = fwTs(e, e)))(e.pos, errT = fwTs(e, e))
+  }
+
+  def fwTs(t: TransformableErrors, node: ErrorNode) = {
+    Trafos(t.errT.eTransformations, t.errT.rTransformations, Some(node))
   }
 
   def translateSIFAss(e: Exp, ctx: TranslationContext, relAssertCtx: TranslationContext = null): Exp = {
@@ -1278,9 +1282,9 @@ object SIFExtendedTransformer {
     }
 
     e match {
-      case And(e1, e2) => And(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e))
+      case And(e1, e2) => And(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = fwTs(e, e))
       case i@Implies(e1, e2) if !isUnary(i) => {
-        Implies(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e))
+        Implies(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, errT = fwTs(e, e))
       }
       case Implies(e1, e2) if e2.exists({
         case PredicateAccess(_, name) => predLowFuncs(name).isDefined
@@ -1307,12 +1311,12 @@ object SIFExtendedTransformer {
           val newTriggers = triggers.map{t => Trigger(t.exps.map{e => translatePrime(e, p1, p2)})()}
           //val res = Forall(vars ++ pvars, newTriggers, Implies(varEqs, translateSIFAss(exp, p1, p2))(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
           val res = Forall(vars, triggers ++ newTriggers,
-            translateSIFAss(exp, ctx, relAssertCtx))(e.pos, errT = NodeTrafo(e)).autoTrigger
+            translateSIFAss(exp, ctx, relAssertCtx))(e.pos, errT = fwTs(e, e)).autoTrigger
           res
         } else {
           val normal = translateNormal(fa, p1, p2)
           val prime = translatePrime(fa, p1, p2)
-          And(Implies(p1, normal)(e.pos, errT = NodeTrafo(e)), Implies(p2, prime)(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
+          And(Implies(p1, normal)(e.pos, errT = fwTs(e, e)), Implies(p2, prime)(e.pos, errT = fwTs(e, e)))(e.pos, errT = fwTs(e, e))
         }
       }
       case l: SIFLowEventExp =>
@@ -1320,15 +1324,15 @@ object SIFExtendedTransformer {
         val act2 = ctx.ctrlVars.activeExecPrime(Some(p2))
         val dynCheckInfo = l.info.getUniqueInfo[SIFDynCheckInfo]
         dynCheckInfo match {
-          case None => EqCmp(act1, act2)(e.pos, errT = NodeTrafo(e))
-          case Some(dci) => And(EqCmp(act1, act2)(e.pos, errT = NodeTrafo(e)), Implies(act1,
+          case None => EqCmp(act1, act2)(e.pos, errT = fwTs(e, e))
+          case Some(dci) => And(EqCmp(act1, act2)(e.pos, errT = fwTs(e, e)), Implies(act1,
             EqCmp(translateNormal(dci.dynCheck, p1, p2),
-              translatePrime(dci.dynCheck, p1, p2))())())(e.pos, errT = NodeTrafo(e))
+              translatePrime(dci.dynCheck, p1, p2))())())(e.pos, errT = fwTs(e, e))
         }
       case l: SIFLowExitExp =>
         val act1 = ctx.ctrlVars.activeExecNoContNormal(None)
         val act2 = ctx.ctrlVars.activeExecNoContPrime(None)
-        Implies(And(relCtx.p1, relCtx.p2)(), EqCmp(act1, act2)(e.pos, errT = NodeTrafo(e)))(e.pos, errT = NodeTrafo(e))
+        Implies(And(relCtx.p1, relCtx.p2)(), EqCmp(act1, act2)(e.pos, errT = fwTs(e, e)))(e.pos, errT = fwTs(e, e))
       case l@SIFLowExp(_, _) =>
         val comparison = translateSIFLowExpComparison(l, relCtx.p1, relCtx.p2)
         val dynCheckInfo = l.info.getUniqueInfo[SIFDynCheckInfo]
@@ -1342,7 +1346,7 @@ object SIFExtendedTransformer {
               inhalePart
             } else {
               InhaleExhaleExp(inhalePart, bothExecutions(comparison, e.pos)
-              )(l.pos, l.info, errT = NodeTrafo(l))
+              )(l.pos, l.info, errT = fwTs(l, l))
             }
         }
       // for the domain method low, used e.g. for list resource
@@ -1366,7 +1370,7 @@ object SIFExtendedTransformer {
                 else InhaleExhaleExp(inhalePart, lowFuncApp)(e.pos, e.info, e.errT)
               case None => lowFuncApp
             }
-            And(translateAssDefault(pap, p1, p2), lowPart)(e.pos, errT = NodeTrafo(e))
+            And(translateAssDefault(pap, p1, p2), lowPart)(e.pos, errT = fwTs(e, e))
           case None => translateAssDefault(pap, p1, p2)
         }
       case o@Old(oldExp) => Old(translateSIFAss(oldExp, ctx, relAssertCtx))(o.pos, o.info, o.errT)
