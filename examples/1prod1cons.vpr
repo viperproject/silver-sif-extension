@@ -1,0 +1,138 @@
+
+
+domain Pair[T,V] {
+  function pair(t: T, v: V) : Pair[T,V]
+  function fst(p: Pair[T, V]) : T
+  function snd(p: Pair[T, V]) : V
+
+  axiom fst_def {
+    forall t: T, v: V :: {fst(pair(t, v))} fst(pair(t, v)) == t
+  }  
+
+  axiom snd_def {
+    forall t: T, v: V :: {snd(pair(t, v))} snd(pair(t, v)) == v
+  }
+
+}
+
+domain Unit {
+  function unit(): Unit
+}
+
+lockType Channel {
+  type Seq[Int]
+  invariant(l, v) = [l.queue |-> ?lp && isList(lp) && v == seqValue(lp)]
+  secInvariant(v) = low(v)
+
+  actions = [(Prod, Int, Unit, unique), (Cons, Unit, Int, unique)]
+  
+  action Prod(v, arg)
+    requires low(arg)
+    ensures true
+  { (Seq(arg) ++ v), (unit()) }
+
+  action Cons(v, arg)
+    requires |v| > 0
+    ensures low(result)
+  { (v[..|v|-1]), (v[|v| - 1]) }
+}
+
+predicate isList(r: Ref)
+function seqValue(r: Ref): Seq[Int]
+  requires acc(isList(r), 1/8)
+
+method emptyList() returns (r: Ref)
+  ensures isList(r) && seqValue(r) == Seq[Int]()
+
+method length(l: Ref) returns (r: Int)
+  requires acc(isList(l), 1/2)
+  ensures acc(isList(l), 1/2) && r == |seqValue(l)|
+
+method enqueue(l: Ref, i: Int)
+  requires isList(l)
+  ensures isList(l) && seqValue(l) == Seq(i) ++ old(seqValue(l))
+
+method dequeue(l: Ref) returns (r: Int)
+  requires isList(l) && |seqValue(l)| > 0
+  ensures isList(l) && seqValue(l) == old(seqValue(l)[..|seqValue(l)|-1]) 
+  ensures r == old(seqValue(l)[|seqValue(l)|-1])
+
+field queue: Ref
+
+
+method main(inputs: Seq[Int], secret: Int)
+  requires lowEvent && low(inputs)
+  ensures true
+{
+  
+  var l : Lock
+  l := newLock[Channel](queue)
+  var list: Ref
+  list := emptyList()
+  l.queue := list
+  release[Channel](l)
+  var cons : Thread
+  var prod : Thread
+  prod := fork producer(inputs, l, secret)
+  cons := fork consumer(l, |inputs|, secret)
+}
+
+
+method producer(inputs: Seq[Int], l: Lock, secret: Int)
+  requires lowEvent && low(inputs) && lock[Channel](l, 1/2) && guard[Channel,Prod](l)
+  ensures lock[Channel](l, 1/2)
+{
+  var i : Int := 0
+  while (i < |inputs|) 
+    invariant i >= 0 && i <= |inputs| && low(i) && lock[Channel](l, 1/2) && guard[Channel,Prod](l)
+  {
+    var newVal: Int
+    newVal  := compute1(inputs[i], secret)
+    acquire[Channel](l)
+    
+    enqueue(l.queue, newVal)
+    
+    release[Channel](l, Prod(newVal))
+    i := i + 1
+  }
+}
+
+method consumer(l: Lock, n: Int, secret: Int)
+  requires lowEvent && n >= 0 && low(n) && lock[Channel](l, 1/2) && guard[Channel,Cons](l)
+  ensures lock[Channel](l, 1/2)
+{
+  var i : Int := 0
+  var res : Int
+  res := 0
+  while (i < n)
+    invariant i >= 0 && i <= n && low(i) && low(res) && lock[Channel](l, 1/2) && guard[Channel,Cons](l)
+  {
+    var recVal: Int
+    acquire[Channel](l)
+    var len : Int
+    len := length(l.queue)
+    while (len == 0)
+      invariant [l.queue |-> ?lp && isList(lp) && len == |seqValue(lp)| && locked[Channel](l, seqValue(lp))]
+    {
+      release[Channel](l)
+      acquire[Channel](l)
+      len := length(l.queue)
+    }
+    recVal := dequeue(l.queue)
+    
+    release[Channel](l, Cons(unit()))
+    res := aggregate(res, recVal, secret)
+    i := i + 1
+  }
+  print(res)
+}
+
+
+method compute1(val: Int, secret: Int) returns (r1: Int)
+  ensures low(val) ==> low(r1)
+
+method aggregate(sum: Int, val: Int, secret: Int) returns (r: Int)
+  ensures low(sum) && low(val) ==> low(r)
+
+method print(i: Int)
+  requires lowEvent && low(i)

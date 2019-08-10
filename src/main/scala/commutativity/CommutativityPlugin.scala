@@ -409,7 +409,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
         PredicateAccessPredicate(pa, amount)()
       }
       case l@Locked(lt, r, value) => {
-        val pa = PredicateAccess(Seq(r, value), lockedPredNames.get(lt).get)()
+        val pa = PredicateAccess(Seq(r), lockedPredNames.get(lt).get)()
         val pap = PredicateAccessPredicate(pa, FullPerm()())()
         val funcApp = FuncApp(lockedFuncNames.get(lt).get, Seq(r))(l.pos, l.info, lockSpecs.get(lt).get.t, NoTrafos)
         val eq = EqCmp(funcApp, value)()
