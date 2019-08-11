@@ -89,7 +89,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
   lazy val pointsToPred2 : P[PVarDefiningPointsToPredicate] = P("[" ~ fieldAcc ~ ("|->" | ("|-[" ~ term ~ "]->")) ~ "?" ~ idndef ~ "&&" ~ exp ~ "]").map{
     case (fa, p, id, body) => {
       val perm = if (p.isInstanceOf[PExp]) p.asInstanceOf[PExp] else PFullPerm()
-      PVarDefiningPointsToPredicate(fa, perm, PLet(fa, PLetNestedScope(PFormalArgDecl(id, PPrimitiv("Ref")), body)))
+      PVarDefiningPointsToPredicate(fa, perm, PLet(fa, PLetNestedScope(PFormalArgDecl(id, PUnknown()), body)))
     }
   }
 
@@ -603,7 +603,7 @@ class CommutativityPlugin extends ParserPluginTemplate with SilverPlugin {
 
 
     val productRes = SIFExtendedTransformer.transform(res, false)
-    //println(productRes)
+    println(productRes)
     val qpTransformed = productRes.transform({
       case fa: Forall => {
         if (fa.isPure) {

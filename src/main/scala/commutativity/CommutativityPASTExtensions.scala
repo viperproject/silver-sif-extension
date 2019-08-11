@@ -7,13 +7,15 @@ import viper.silver.sif.{SIFLowEventExp, SIFLowExp}
 import scala.collection.mutable.ListBuffer
 
 
-case class PSimplePointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PExp) extends PExtender with POpApp {
+case class PSimplePointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PExp) extends PExtender with PExp {
 
-  override def args: Seq[PExp] = Seq(receiver, perm, arg)
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "pointsto"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def transform(go: PNode => PNode): PExtender = {
     PSimplePointsToPredicate(go(receiver).asInstanceOf[PFieldAccess], go(perm).asInstanceOf[PExp], go(arg).asInstanceOf[PExp])
@@ -25,9 +27,10 @@ case class PSimplePointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PEx
     arg match {
       case _:PAnyVal => None
       case _ => {
-        t.checkTopTyped(arg.asInstanceOf[PExp], Some(receiver.typ))
+       t.checkTopTyped(arg.asInstanceOf[PExp], Some(receiver.typ))
       }
     }
+    this.typ = PPrimitiv("Bool")
     None
   }
   override def namecheck(n: NameAnalyser) = ???
@@ -44,14 +47,15 @@ case class PSimplePointsToPredicate(receiver: PFieldAccess, perm: PExp, arg: PEx
   override def getsubnodes(): Seq[PNode] = Seq(receiver, perm, arg)
 }
 
-case class PVarDefiningPointsToPredicate(receiver: PFieldAccess, perm: PExp, var arg: PLet) extends PExtender with POpApp {
+case class PVarDefiningPointsToPredicate(receiver: PFieldAccess, perm: PExp, var arg: PLet) extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def args: Seq[PExp] = Seq(receiver, perm, arg)
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
-  override def opName: String = "pointsto"
-
-  override def signatures = ???
 
   override def transform(go: PNode => PNode): PExtender = {
     PVarDefiningPointsToPredicate(go(receiver).asInstanceOf[PFieldAccess], go(perm).asInstanceOf[PExp], go(arg).asInstanceOf[PLet])
@@ -59,9 +63,9 @@ case class PVarDefiningPointsToPredicate(receiver: PFieldAccess, perm: PExp, var
 
   override def typecheck(t: TypeChecker, n: NameAnalyser):Option[Seq[String]] = {
     t.checkTopTyped(receiver, None)
-    //this.arg = PLet(arg.exp, PLetNestedScope(PFormalArgDecl(arg.nestedScope.variable.idndef, receiver.typ), arg.nestedScope.body))
     t.checkTopTyped(perm, Some(PPrimitiv("Perm")))
     t.checkTopTyped(arg, Some(PPrimitiv("Bool")))
+    this.typ = PPrimitiv("Bool")
     None
   }
   override def namecheck(n: NameAnalyser) = ???
@@ -293,17 +297,20 @@ case class PLockSpec(idndef: PIdnDef, t: PType, invariant: PInvariantDef, secInv
   }
 }
 
-case class PLow(e: PExp) extends PExtender with POpApp {
-  override def args: Seq[PExp] = Seq(e)
+case class PLow(e: PExp) extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "low"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def getsubnodes(): Seq[PNode] = Seq(e)
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
     t.checkTopTyped(e, None)
+    this.typ = PPrimitiv("Bool")
     None
   }
 
@@ -316,16 +323,19 @@ case class PLow(e: PExp) extends PExtender with POpApp {
   }
 }
 
-case class PLowEvent() extends PExtender with POpApp {
-  override def args: Seq[PExp] = Seq()
+case class PLowEvent() extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "lowEvent"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def getsubnodes(): Seq[PNode] = Seq()
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    this.typ = PPrimitiv("Bool")
     None
   }
 
@@ -338,12 +348,14 @@ case class PLowEvent() extends PExtender with POpApp {
   }
 }
 
-case class PJoinable(method: PIdnUse, e: PExp, arguments: Seq[PExp]) extends PExtender with POpApp {
-  override def args: Seq[PExp] = Seq(e) ++ arguments
+case class PJoinable(method: PIdnUse, e: PExp, arguments: Seq[PExp]) extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "joinable"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def getsubnodes(): Seq[PNode] = Seq(method, e) ++ arguments
 
@@ -359,6 +371,7 @@ case class PJoinable(method: PIdnUse, e: PExp, arguments: Seq[PExp]) extends PEx
           for (i <- 0 until arguments.length) {
             t.checkTopTyped(arguments(i), Some(m.formalArgs(i).typ))
           }
+          this.typ = PPrimitiv("Bool")
           None
         }else{
           Some(Seq("Wrong number of arguments in joinable[" + method.name + "]"))
@@ -373,12 +386,14 @@ case class PJoinable(method: PIdnUse, e: PExp, arguments: Seq[PExp]) extends PEx
   }
 }
 
-case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtender with POpApp {
-  override def args: Seq[PExp] = Seq(lockRef, amount)
+case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "lock"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef, amount)
 
@@ -391,6 +406,7 @@ case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtend
     t.checkTopTyped(amount, Some(PPrimitiv("Perm")))
     n.definition(t.curMember)(lockType) match {
       case _: PLockSpec => {
+        this.typ = PPrimitiv("Bool")
         None
       }
       case _ => Some(Seq("Unknown lock type: " + lockType.name))
@@ -402,12 +418,14 @@ case class PLock(lockType: PIdnUse, lockRef: PExp, amount: PExp) extends PExtend
   }
 }
 
-case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExtender with POpApp {
-  override def args: Seq[PExp] = Seq(lockRef, value)
+case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "locked"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef, value)
 
@@ -421,6 +439,7 @@ case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExten
     n.definition(t.curMember)(lockType) match {
       case ls: PLockSpec => {
         t.checkTopTyped(value, Some(ls.t))
+        this.typ = PPrimitiv("Bool")
         None
       }
       case _ => Some(Seq("Unknown lock type: " + lockType.name))
@@ -432,12 +451,14 @@ case class PLocked(lockType: PIdnUse, lockRef: PExp, value: PExp) extends PExten
   }
 }
 
-case class PGuard(lockType: PIdnUse, guardName: PIdnUse, lockRef: PExp) extends PExtender with POpApp {
-  override def args: Seq[PExp] = Seq(lockRef)
+case class PGuard(lockType: PIdnUse, guardName: PIdnUse, lockRef: PExp) extends PExtender with PExp {
+  override def forceSubstitution(ts: PTypeSubstitution): Unit = {
+    _typeSubstutions = Seq(ts)
+  }
 
-  override def opName: String = "guard"
+  var _typeSubstutions : Seq[PTypeSubstitution] = Seq(PTypeSubstitution.id)
 
-  override def signatures = ???
+  override def typeSubstitutions: Seq[PTypeSubstitution] = _typeSubstutions
 
   override def getsubnodes(): Seq[PNode] = Seq(lockType, lockRef)
 
@@ -451,7 +472,10 @@ case class PGuard(lockType: PIdnUse, guardName: PIdnUse, lockRef: PExp) extends 
     n.definition(t.curMember)(lockType) match {
       case ls: PLockSpec => {
         ls.actionList.find(la => la.idndef.name == guardName.name) match {
-          case Some(_) => None
+          case Some(_) => {
+            this.typ = PPrimitiv("Bool")
+            None
+          }
           case None => Some(Seq("Unknown action: " + guardName.name))
         }
       }
