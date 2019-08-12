@@ -671,3 +671,26 @@ case class PRelease(lockType: PIdnUse, lockExp: PExp, action: Option[(PIdnUse, P
     PRelease(go(lockType).asInstanceOf[PIdnUse], go(lockExp).asInstanceOf[PExp], if (action.isDefined) Some((go(action.get._1).asInstanceOf[PIdnUse], go(action.get._2).asInstanceOf[PExp])) else None)
   }
 }
+
+case class PShare(lockType: PIdnUse, lockExp: PExp, lockVal: PExp) extends PExtender with PStmt {
+  override def getsubnodes(): Seq[PNode] = Seq(lockType, lockExp, lockVal)
+
+  override def translateStmt(t: Translator): Stmt = {
+    Share(lockType.name, t.exp(lockExp), t.exp(lockVal))(t.liftPos(this))
+  }
+
+  override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
+    t.checkTopTyped(lockExp, Some(PPrimitiv("Ref")))
+    n.definition(t.curMember)(lockType) match {
+      case ls: PLockSpec => {
+        t.checkTopTyped(lockVal, Some(ls.t))
+        None
+      }
+      case _ => Some(Seq("Unknown lock type: " + lockType.name))
+    }
+  }
+
+  override def transform(go: PNode => PNode): PExtender = {
+    PShare(go(lockType).asInstanceOf[PIdnUse], go(lockExp).asInstanceOf[PExp], go(lockVal).asInstanceOf[PExp])
+  }
+}

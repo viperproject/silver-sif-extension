@@ -99,7 +99,7 @@ method main(inputs: Seq[Seq[Int]], secret: Int)
   var l : Lock
   l := newLock[MapLock](lockMap)
   l.lockMap := m
-  release[MapLock](l)
+  share[MapLock](l, empty())
   var i : Int := 0
   var threads : Array
   threads := emptyArray(|inputs|)

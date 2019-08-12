@@ -70,7 +70,7 @@ method main(inputs: Seq[Int], secret: Int)
   var list: Ref
   list := emptyList()
   l.queue := list
-  release[Channel](l)
+  share[Channel](l, Seq[Int]())
   var cons : Thread
   var prod : Thread
   prod := fork producer(inputs, l, secret)

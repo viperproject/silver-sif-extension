@@ -3,7 +3,7 @@ package commutativity
 import viper.silver.ast._
 import viper.silver.ast.pretty.PrettyPrintPrimitives
 import viper.silver.verifier.{ConsistencyError, VerificationResult}
-import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps, char, parens, show, ssep, text}
+import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps, parens, show, ssep, text}
 
 
 case class InvariantDef(params: Seq[LocalVarDecl], inv: Exp){
@@ -152,6 +152,11 @@ case class Join(m: String, resVars: Seq[LocalVar], tokenArg: Exp)(val pos: Posit
 case class Release(lockType: String, lockExp: Exp, action: Option[(String, Exp)])(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
   val extensionSubnodes : Seq[Node] = Seq(lockExp) ++ (if (action.isDefined) Seq(action.get._2) else Seq())
   def prettyPrint : PrettyPrintPrimitives#Cont = text("release[" + lockType + "]") <> (if (action.isDefined) parens(show(lockExp) <> text(", ") <> text(action.get._1) <> parens(show(action.get._2))) else parens(show(lockExp)))
+}
+
+case class Share(lockType: String, lockExp: Exp, lockVal: Exp)(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
+  val extensionSubnodes : Seq[Node] = Seq(lockExp, lockVal)
+  def prettyPrint : PrettyPrintPrimitives#Cont = text("share[" + lockType + "]") <>  parens(show(lockExp) <> text(", ") <> show(lockVal))
 }
 
 case class Acquire(lockType: String, lockExp: Exp)(val pos: Position=NoPosition, val info: Info=NoInfo, val errT: ErrorTrafo=NoTrafos) extends ExtensionStmt {
