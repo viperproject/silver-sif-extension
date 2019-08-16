@@ -306,14 +306,14 @@ object SIFExtendedTransformer {
     time = None
     primedNames.clear()
     primedNames ++= primedBefore
-    Method(m.name, newArgs, newReturns, newPres, newPosts, newBody)()
+    Method(m.name, newArgs, newReturns, newPres, newPosts, newBody)(m.pos)
   }
 
   def _conjoinOptions(in: Seq[Option[Exp]]): Exp = {
     val defined = in.filter(x => x.isDefined).map(x => x.get)
     defined.size match {
       case 0 => TrueLit()()
-      case _ => defined.reduceRight((a, b) => And(a, b)())
+      case _ => defined.reduceRight((a, b) => And(a, b)(a.pos))
     }
   }
 
@@ -1273,6 +1273,10 @@ object SIFExtendedTransformer {
   }
 
   def translateSIFAss(e: Exp, ctx: TranslationContext, relAssertCtx: TranslationContext = null): Exp = {
+    if (e.toString().contains("$presFinal$36 == $presOrig$34 / ($presArg$35 + 3)")){
+      println("Found it: " + e)
+      println("position is " + e.pos)
+    }
     val p1 = ctx.p1
     val p2 = ctx.p2
     val relCtx = if (relAssertCtx == null) ctx else relAssertCtx
