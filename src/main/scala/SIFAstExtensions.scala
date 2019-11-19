@@ -125,7 +125,7 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowEvent")
 
-  override val extensionIsPure: Boolean = false
+  override val extensionIsPure: Boolean = true
 }
 
 case class SIFLowExitExp()(val pos: Position = NoPosition,
