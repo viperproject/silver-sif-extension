@@ -1261,9 +1261,10 @@ object SIFExtendedTransformer {
       case None => EqCmp(l.exp, primedExp)(l.pos, errT = fwTs(l, l))
       case Some(str) =>
         _program.findDomainFunctionOptionally(str) match {
-          case Some(df) => DomainFuncApp(df, Seq(l.exp, primedExp), Map())(l.pos, l.info, errT = fwTs(l, l))
+          case Some(df) => DomainFuncApp(df, Seq(l.exp, primedExp), Map[TypeVar, Type]())(l.pos, l.info, errT = fwTs(l, l))
           case None => _program.findFunctionOptionally(str) match {
             case Some(f) => FuncApp(f, Seq(l.exp, primedExp))(l.pos, l.info, errT = fwTs(l, l))
+            case None => sys.error(s"Unknown comparator $str.")
           }
         }
     }
