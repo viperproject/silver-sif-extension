@@ -1261,7 +1261,7 @@ object SIFExtendedTransformer {
       case None => EqCmp(l.exp, primedExp)(l.pos, errT = fwTs(l, l))
       case Some(str) =>
         _program.findDomainFunctionOptionally(str) match {
-          case Some(df) => DomainFuncApp(df, Seq(l.exp, primedExp), Map[TypeVar, Type]())(l.pos, l.info, errT = fwTs(l, l))
+          case Some(df) => DomainFuncApp(df, Seq(l.exp, primedExp), l.typVarMap)(l.pos, l.info, errT = fwTs(l, l))
           case None => _program.findFunctionOptionally(str) match {
             case Some(f) => FuncApp(f, Seq(l.exp, primedExp))(l.pos, l.info, errT = fwTs(l, l))
             case None => sys.error(s"Unknown comparator $str.")
@@ -1344,7 +1344,7 @@ object SIFExtendedTransformer {
         val act1 = ctx.ctrlVars.activeExecNoContNormal(None)
         val act2 = ctx.ctrlVars.activeExecNoContPrime(None)
         Implies(And(relCtx.p1, relCtx.p2)(), EqCmp(act1, act2)(e.pos, errT = fwTs(e, e)))(e.pos, errT = fwTs(e, e))
-      case l@SIFLowExp(_, _) =>
+      case l@SIFLowExp(_, _, _) =>
         val comparison = translateSIFLowExpComparison(l, relCtx.p1, relCtx.p2)
         val dynCheckInfo = l.info.getUniqueInfo[SIFDynCheckInfo]
         dynCheckInfo match {

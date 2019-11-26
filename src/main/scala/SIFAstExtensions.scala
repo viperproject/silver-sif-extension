@@ -102,7 +102,7 @@ case class SIFAssertNoException()(val pos: Position = NoPosition,
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("assert no exception")
 }
 
-case class SIFLowExp(exp: Exp, comparator: Option[String] = None)
+case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map[TypeVar, Type] = Map())
                     (val pos: Position = NoPosition,
                      val info: Info = NoInfo,
                      val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
