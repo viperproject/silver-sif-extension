@@ -26,6 +26,7 @@ trait SIFExtendedTransformer {
       * May lead to invalid programs when such a method calls another methods that does contain such specs.
       */
     var onlyTransformMethodsWithRelationalSpecs: Boolean = false
+    var generateAllLowFuncs: Boolean = true
   }
   def optimizeControlFlow(v: Boolean): Unit = {
     Config.optimizeControlFlow = v
@@ -35,6 +36,9 @@ trait SIFExtendedTransformer {
   }
   def optimizeRestrictActVars(v: Boolean): Unit = {
     Config.optimizeRestrictActVars = v
+  }
+  def generateAllLowFuncs(v: Boolean): Unit = {
+    Config.generateAllLowFuncs = v
   }
   def onlyTransformMethodsWithRelationalSpecs(v: Boolean): Unit = {
     Config.onlyTransformMethodsWithRelationalSpecs = v
@@ -533,7 +537,10 @@ trait SIFExtendedTransformer {
 
     predLowFuncs.update(pred.name, lowF)
     predAllLowFuncs.update(pred.name, allLowF)
-    (Seq(pred1, pred2), Seq(lowF, allLowF))
+    if (Config.generateAllLowFuncs)
+      (Seq(pred1, pred2), Seq(lowF, allLowF))
+    else
+      (Seq(pred1, pred2), Seq(lowF, None))
   }
 
   private def bypassPreamble(p1: Exp, p2: Exp, ctrlVars: MethodControlFlowVars,
@@ -700,6 +707,12 @@ trait SIFExtendedTransformer {
       p1 = And(p1, Not(bypass1r)())(),
       p2 = And(p2, Not(bypass2r)())()
     )
+    /*
+    val invCtx = ctx.copy(
+      p1 = ctrlVars.activeExecNoContNormal(Some(p1)),
+      p2 = ctrlVars.activeExecNoContPrime(Some(p2))
+    )
+     */
     newStdInvs = simplifyConditions(newStdInvs.map(e => translateSIFAss(e, invCtx, invCtx)))
     val newInvs: Seq[Exp] = newStdInvs ++
       targetValEqualities1.map(e => Implies(bypass1r, e)()) ++
@@ -709,7 +722,7 @@ trait SIFExtendedTransformer {
     /*val bodyPostamble = Seq(
       Inhale(Or(Not(p1)(), ctrlVars.activeExecNoContNormal(None))())(),
       Inhale(Or(Not(p2)(), ctrlVars.activeExecNoContPrime(None))())()
-    ) */
+    )*/
     stmts :+= While(newCond, newInvs, Seqn(bodyPreamble ++ Seq(bodyRes), Seq())())()
 
     // loop reconstruction
