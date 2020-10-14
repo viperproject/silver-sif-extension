@@ -826,12 +826,18 @@ object SIFExtendedTransformer {
                 LocalVarAssign(ctrl.get, old.get)())
           }
       }
-      def tmpReAssigns(tuples: (LocalVar, Option[LocalVar])*): Seq[Stmt] = {
+      def tmpReAssigns(tuples: (LocalVar, Option[LocalVar], Option[Seq[Option[LocalVar]]])*): Seq[Stmt] = {
         tuples
           .filter(tuple => tuple._2.isDefined)
           .flatMap{
-            case (tmp: LocalVar, ctrl: Option[LocalVar]) =>
+            case (tmp: LocalVar, ctrl: Option[LocalVar], None) =>
               Seq(LocalVarAssign(ctrl.get, Or(ctrl.get, tmp)())())
+            case (tmp: LocalVar, ctrl: Option[LocalVar], Some(unless)) =>
+              val negatedUnless = unless.map{
+                case Some(v) => Some(Not(v)())
+                case None => None
+              }
+              Seq(LocalVarAssign(ctrl.get, Or(ctrl.get, And(tmp, _conjoinOptions(negatedUnless))())())())
           }
       }
 
@@ -862,16 +868,16 @@ object SIFExtendedTransformer {
       stmts :+= If(p2, Seqn(tmpAssigns2, Seq())(), skip)()
       stmts :+= translateStatement(tryStmt.finallyBlock.get, ctx)
       val tmpReAssigns1 = tmpReAssigns(
-        (tmpret1r, ctrlVars.ret1r),
-        (tmpbreak1r, ctrlVars.break1r),
-        (tmpcont1r, ctrlVars.cont1r),
-        (tmpexcept1r, ctrlVars.except1r)
+        (tmpexcept1r, ctrlVars.except1r, Some(Seq(ctrlVars.ret1r, ctrlVars.break1r))),
+        (tmpret1r, ctrlVars.ret1r, None),
+        (tmpbreak1r, ctrlVars.break1r, None),
+        (tmpcont1r, ctrlVars.cont1r, None)
       )
       val tmpReAssigns2 = tmpReAssigns(
-        (tmpret2r, ctrlVars.ret2r),
-        (tmpbreak2r, ctrlVars.break2r),
-        (tmpcont2r, ctrlVars.cont2r),
-        (tmpexcept2r, ctrlVars.except2r)
+        (tmpexcept2r, ctrlVars.except2r, Some(Seq(ctrlVars.ret2r, ctrlVars.break2r))),
+        (tmpret2r, ctrlVars.ret2r, None),
+        (tmpbreak2r, ctrlVars.break2r, None),
+        (tmpcont2r, ctrlVars.cont2r, None)
       )
       stmts :+= If(p1, Seqn(tmpReAssigns1, Seq())(), skip)()
       stmts :+= If(p2, Seqn(tmpReAssigns2, Seq())(), skip)()
@@ -1192,7 +1198,7 @@ object SIFExtendedTransformer {
           Implies(p2, Not(ctrlVars.except2r.get)())(s.pos, s.info, s.errT)
         )(s.pos, s.info, s.errT)
         else TrueLit()()
-        Assert(exp)(s.pos, s.info, s.errT)
+        Exhale(exp)(s.pos, s.info, s.errT)
       case SIFInlinedCallStmt(stmts) =>
         val newCtrlVars = createControlFlowVars(stmts)
         val inlinedCtx = TranslationContext(p1, p2, newCtrlVars, ctx.currentMethod)
