@@ -9,7 +9,7 @@ import scala.collection.immutable.HashSet
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
-object SIFExtendedTransformer {
+trait SIFExtendedTransformer {
   object Config {
     /** If true, don't generate all the control flow variables, just the ones needed for each method. */
     var optimizeControlFlow: Boolean = true
@@ -53,7 +53,7 @@ object SIFExtendedTransformer {
     Config.primedFuncAppReplacements.clear()
   }
 
-
+  val primedNamesPerMethod = new mutable.HashMap[String, Map[String, String]]
   val primedNames = new mutable.HashMap[String, String]
   val relationalPredicates = new mutable.HashSet[Predicate]
   val predLowFuncs = new mutable.HashMap[String, Option[Function]]
@@ -304,6 +304,7 @@ object SIFExtendedTransformer {
     }
 
     time = None
+    primedNamesPerMethod.update(m.name, primedNames.toMap)
     primedNames.clear()
     primedNames ++= primedBefore
     Method(m.name, newArgs, newReturns, newPres, newPosts, newBody)(m.pos)
@@ -937,23 +938,29 @@ object SIFExtendedTransformer {
           Inhale(translatePrime(e, p1, p2))(i.pos, i.info, i.errT))
         case ex@Exhale(e) => (Exhale(translateNormal(e, p1, p2))(ex.pos, ex.info, ex.errT),
           Exhale(translatePrime(e, p1, p2))(ex.pos, ex.info, ex.errT))
-        case b: SIFBreakStmt => (LocalVarAssign(ctrlVars.break1r.get, TrueLit()())(b.pos, b.info, b.errT),
-          LocalVarAssign(ctrlVars.break2r.get, TrueLit()())(b.pos, b.info, b.errT))
+        case b: SIFBreakStmt => {
+          // TODO
+          (LocalVarAssign(ctrlVars.break1r.get, TrueLit()())(b.pos, b.info, b.errT),
+            LocalVarAssign(ctrlVars.break2r.get, TrueLit()())(b.pos, b.info, b.errT))
+        }
         case c: SIFContinueStmt => (LocalVarAssign(ctrlVars.cont1r.get, TrueLit()())(c.pos, c.info, c.errT),
           LocalVarAssign(ctrlVars.cont2r.get, TrueLit()())(c.pos, c.info, c.errT))
         case r@SIFReturnStmt(e, resVar) =>
-          val assign1 = resVar match {
-            case Some(rv) => Seq(LocalVarAssign(translateNormal(rv, p1, p2),
-              translateNormal(e.get, p1, p2))(r.pos, r.info, r.errT))
-            case None => Seq()
+          {
+            // TODO
+            val assign1 = resVar match {
+              case Some(rv) => Seq(LocalVarAssign(translateNormal(rv, p1, p2),
+                translateNormal(e.get, p1, p2))(r.pos, r.info, r.errT))
+              case None => Seq()
+            }
+            val assign2 = resVar match {
+              case Some(rv) => Seq(LocalVarAssign(translatePrime(rv, p1, p2),
+                translatePrime(e.get, p1, p2))(r.pos, r.info, r.errT))
+              case None => Seq()
+            }
+            (Seqn(assign1 :+ LocalVarAssign(ctrlVars.ret1r.get, TrueLit()())(), Seq())(),
+              Seqn(assign2 :+ LocalVarAssign(ctrlVars.ret2r.get, TrueLit()())(), Seq())())
           }
-          val assign2 = resVar match {
-            case Some(rv) => Seq(LocalVarAssign(translatePrime(rv, p1, p2),
-              translatePrime(e.get, p1, p2))(r.pos, r.info, r.errT))
-            case None => Seq()
-          }
-          (Seqn(assign1 :+ LocalVarAssign(ctrlVars.ret1r.get, TrueLit()())(), Seq())(),
-            Seqn(assign2 :+ LocalVarAssign(ctrlVars.ret2r.get, TrueLit()())(), Seq())())
 
         case _ => throw new IllegalArgumentException(s"The statement $s can't be translated partially")
       }
@@ -1158,13 +1165,17 @@ object SIFExtendedTransformer {
         }
         Seqn(Seq(if1, if2, assert), Seq())()
       case r: SIFReturnStmt => {
+        // TODO
         val (first, second) = translateStmtPartial(r).asInstanceOf[(Seqn, Seqn)]
         val r1 = If(act1, first, skip)()
         val r2 = If(act2, second, skip)()
         Seqn(Seq(r1, r2, incrementTime(p1, p2)), Seq())()
       }
-      case b@SIFBreakStmt() => translateAssignment(ctrlVars.break1r.get, TrueLit()(),
-        ctrlVars.break2r.get, TrueLit()(), b)
+      case b@SIFBreakStmt() => {
+        // TODO
+        translateAssignment(ctrlVars.break1r.get, TrueLit()(),
+          ctrlVars.break2r.get, TrueLit()(), b)
+      }
       case c@SIFContinueStmt() => translateAssignment(ctrlVars.cont1r.get, TrueLit()(),
         ctrlVars.cont2r.get, TrueLit()(), c)
       case tryCatch: SIFTryCatchStmt => translateTryCatchStmt(tryCatch, ctx)
@@ -1286,10 +1297,6 @@ object SIFExtendedTransformer {
   }
 
   def translateSIFAss(e: Exp, ctx: TranslationContext, relAssertCtx: TranslationContext = null): Exp = {
-    if (e.toString().contains("$presFinal$36 == $presOrig$34 / ($presArg$35 + 3)")){
-      println("Found it: " + e)
-      println("position is " + e.pos)
-    }
     val p1 = ctx.p1
     val p2 = ctx.p2
     val relCtx = if (relAssertCtx == null) ctx else relAssertCtx
@@ -1690,3 +1697,5 @@ object SIFExtendedTransformer {
     }
   }
 }
+
+object SIFExtendedTransformer extends SIFExtendedTransformer
