@@ -552,7 +552,7 @@ trait SIFExtendedTransformer {
 
   /** Translate a while statement into MPP.
     */
-  private def translateWhileStmt(w: While, ctx: TranslationContext): Seqn = {
+  private def translateWhileStmt(w: While, els: Option[Stmt], ctx: TranslationContext): Seqn = {
     val p1 = ctx.p1; val p2 = ctx.p2; val ctrlVars = ctx.ctrlVars
 
     // check if we need to do a reconstruction of this loop (iff it has ret/break/except stmt or we don't optimize)
@@ -745,8 +745,17 @@ trait SIFExtendedTransformer {
         Inhale(Or(Not(p1r)(), Not(ctrlVars.activeExecNoContNormal(None))())())(),
         Inhale(Or(Not(p2r)(), Not(ctrlVars.activeExecNoContPrime(None))())())()
       )
+
+      val elseBranch = if (els.isDefined && ctrlVars.break1r.isDefined) {
+        val elsCtx = ctx.copy(
+          p1 = ctrlVars.brokenOutNormal(Some(p1)),
+          p2 = ctrlVars.brokenOutPrime(Some(p2)),
+        )
+        Seq(translateStatement(els.get, elsCtx))
+      } else Seq()
+
       val recThn = Seqn(
-        (ctrlVarAssigns ++ recInhales ++ bodyPreamble ++ Seq(bodyRes) ++ recKillInhales),
+        (ctrlVarAssigns ++ recInhales ++ bodyPreamble ++ Seq(bodyRes) ++ recKillInhales ++ elseBranch),
         Seq())()
       stmts :+= If(recCond, recThn, skip)(info=SimpleInfo(Seq("Loop Reconstruction.\n  ")))
     }
@@ -1056,7 +1065,8 @@ trait SIFExtendedTransformer {
         val elsRes = translateStatement(els, TranslationContext(p3r, p4r, ctrlVars, ctx.currentMethod))
         Seqn(Seq(p1Assign, p2Assign, p3Assign, p4Assign, incrementTime(p1, p2), thnRes, elsRes), Seq(p1d, p2d, p3d, p4d))()
       }
-      case w: While => translateWhileStmt(w, ctx)
+      case SIFWhileElse(whl, els) => translateWhileStmt(whl, Some(els), ctx)
+      case w: While => translateWhileStmt(w, None, ctx)
       case mc@MethodCall(name, args, targets) => {
         var argDecls = Seq[LocalVarDecl]()
         var newArgs = Seq[Exp](act1, act2)
@@ -1701,6 +1711,13 @@ trait SIFExtendedTransformer {
     }
     def activeExecNoContPrime(p2: Option[Exp]): Exp = {
       activeExecHelper(p2, removeOptions(Seq(ret2r, break2r, except2r)) ++ labelRefs2)
+    }
+
+    def brokenOutNormal(p1: Option[Exp]): Exp = {
+      And(p1.get, break1r.get)()
+    }
+    def brokenOutPrime(p2: Option[Exp]): Exp = {
+      And(p2.get, break2r.get)()
     }
   }
 

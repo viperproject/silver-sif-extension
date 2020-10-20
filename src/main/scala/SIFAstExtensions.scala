@@ -18,6 +18,15 @@ case class SIFReturnStmt(exp: Option[Exp], resVar: Option[LocalVar])
   })
 }
 
+case class SIFWhileElse(whl: While, els: Stmt)
+                        (val pos: Position = NoPosition,
+                         val info: Info = NoInfo,
+                         val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
+  override def extensionSubnodes: Seq[Node] = Seq(whl, els)
+
+  override def prettyPrint: PrettyPrintPrimitives#Cont = show(whl) <+> text("else") <+> show(els)
+}
+
 case class SIFBreakStmt()(val pos: Position = NoPosition,
                           val info: Info = NoInfo,
                           val errT: ErrorTrafo = NoTrafos) extends ExtensionStmt {
