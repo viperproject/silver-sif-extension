@@ -190,11 +190,13 @@ trait SIFExtendedTransformer {
 
   def collectRelationalPredicates(p: Program, relPreds: mutable.HashSet[Predicate]): Unit = {
     def directlyRelational(pred: Predicate): Boolean = {
-       pred.body.isDefined && !isUnary(pred.body.get)
+       val res = pred.body.isDefined && !isUnary(pred.body.get)
+       res
     }
 
     relPreds.clear()
     relPreds ++= p.predicates.filter(pred => directlyRelational(pred))
+
     val dependencies = mutable.HashMap[String, Seq[String]]()
 
     relPreds.foreach(pred =>
@@ -205,6 +207,7 @@ trait SIFExtendedTransformer {
         dependencies.update(pap.loc.predicateName, dependencies.getOrElse(pap.loc.predicateName, Seq()) :+ pred.name)
       )
     )
+
     // go through dependent predicates to add them to relationals
     val queue = mutable.Queue[String](relPreds.toSeq.map(rp => rp.name): _*)
     while (queue.nonEmpty) {
@@ -540,7 +543,7 @@ trait SIFExtendedTransformer {
     if (Config.generateAllLowFuncs)
       (Seq(pred1, pred2), Seq(lowF, allLowF))
     else
-      (Seq(pred1, pred2), Seq(lowF, None))
+      (Seq(pred1, pred2), Seq(lowF))  // MARCO: temp change
   }
 
   private def bypassPreamble(p1: Exp, p2: Exp, ctrlVars: MethodControlFlowVars,
@@ -1494,7 +1497,10 @@ trait SIFExtendedTransformer {
     val translated = e match {
       case l: SIFLowExp => translateSIFLowExpComparison(l, null, null)
       case p@PredicateAccessPredicate(loc, _) =>
-        val (lowFName, formalArgs, duplicatedFormalArgs) = predLowFuncInfo(loc.predicateName).get
+        val info = predLowFuncInfo(loc.predicateName)
+        if (info.isEmpty)
+          return TrueLit()()
+        val (lowFName, formalArgs, duplicatedFormalArgs) = info.get
         FuncApp(lowFName,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
           p.pos, NoInfo, Bool, p.errT)
