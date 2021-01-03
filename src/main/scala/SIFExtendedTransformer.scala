@@ -352,7 +352,7 @@ trait SIFExtendedTransformer {
     }
 
     // all accs we get via predicates
-    lowExpressions ++= predicateSrc.flatMap[Exp, Seq[Exp]](e => e.deepCollect{
+    lowExpressions ++= predicateSrc.flatMap(e => e.deepCollect{
       case PredicateAccessPredicate(loc, _) =>
         val funcApp = FuncApp(predAllLowFuncs(loc.predicateName).get,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))()
