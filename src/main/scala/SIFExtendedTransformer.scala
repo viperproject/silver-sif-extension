@@ -559,7 +559,7 @@ trait SIFExtendedTransformer {
     val p1 = ctx.p1; val p2 = ctx.p2; val ctrlVars = ctx.ctrlVars
 
     // check if we need to do a reconstruction of this loop (iff it has ret/break/except stmt or we don't optimize)
-    val recNeeded: Boolean = {
+    val recNeeded: Boolean = els.isDefined || {
       var rn = !Config.optimizeControlFlow
     w.body.visit({
       case _: SIFReturnStmt => rn = true
