@@ -119,6 +119,21 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None)
   override def verifyExtExp(): VerificationResult = ???
 }
 
+case class SIFRelExp(v: LocalVar, i: IntLit)
+                    (val pos: Position = NoPosition,
+                     val info: Info = NoInfo,
+                     val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
+  override def extensionSubnodes: Seq[Node] = Seq(v, i)
+
+  override def typ: Type = v.typ
+
+  override def prettyPrint: PrettyPrintPrimitives#Cont = (text("rel")) <> parens(show(v) <> "," <> show(i))
+
+  override val extensionIsPure: Boolean = true
+
+  override def verifyExtExp(): VerificationResult = ???
+}
+
 case class SIFLowEventExp()(val pos: Position = NoPosition,
                             val info: Info = NoInfo,
                             val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {

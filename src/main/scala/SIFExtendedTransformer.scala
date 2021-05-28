@@ -1398,6 +1398,7 @@ object SIFExtendedTransformer {
 
   def translatePrime[T <: Exp](e: T, p1: Exp, p2: Exp) : T = {
     e.transform{
+      case SIFRelExp(v, i) => if (i.i == 0) translateNormal(v, p1, p2) else translatePrime(v, p1, p2)
       case d: LocalVarDecl if primedNames.contains(d.name) =>
         d.copy(name = primedNames(d.name))(d.pos, d.info, d.errT)
       case l: LocalVar if primedNames.contains(l.name) =>
@@ -1426,6 +1427,7 @@ object SIFExtendedTransformer {
 
   def translateNormal[T <: Exp](e: T, p1: Exp, p2: Exp): T = {
     e.transform{
+      case SIFRelExp(v, i) => if (i.i == 0) translateNormal(v, p1, p2) else translatePrime(v, p1, p2)
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
       case f@DomainFuncApp("Low", args, _) => Implies(And(p1, p2)(), translateSIFLowExpComparison(SIFLowExp(args.head)(), p1, p2))()
     }
