@@ -2,13 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2011-2020 ETH Zurich.
+// Copyright (c) 2011-2023 ETH Zurich.
 
-package viper.silver.sif
+package viper.gobra.translator.transformers.hyper
 
+import viper.gobra.backend.BackendVerifier
+import viper.gobra.translator.transformers.ViperTransformer
 import viper.silver.ast._
 import viper.silver.ast.utility.Simplifier
-import viper.silver.verifier.errors
+import viper.silver.verifier.{AbstractError, errors}
 import viper.silver.verifier.errors.{AssertFailed, ErrorNode}
 
 import scala.collection.immutable.HashSet
@@ -179,8 +181,8 @@ trait SIFExtendedTransformer {
         a.copy(name = newName)(a.pos, a.info, a.errT)
       }
       predLowFuncInfo.update(pred.name, if (relationalPredicates.contains(pred) && pred.body.isDefined)
-          Some(getName(pred.name + "_low"), pred.formalArgs, duplicatedArgs)
-        else None
+        Some(getName(pred.name + "_low"), pred.formalArgs, duplicatedArgs)
+      else None
       )
       predAllLowFuncInfo.update(pred.name, pred.body match {
         case Some(_) =>
@@ -196,7 +198,7 @@ trait SIFExtendedTransformer {
 
   def collectRelationalPredicates(p: Program, relPreds: mutable.HashSet[Predicate]): Unit = {
     def directlyRelational(pred: Predicate): Boolean = {
-       pred.body.isDefined && !isUnary(pred.body.get)
+      pred.body.isDefined && !isUnary(pred.body.get)
     }
 
     relPreds.clear()
@@ -535,7 +537,7 @@ trait SIFExtendedTransformer {
 
       val allLowBody: Exp = unfoldingPredicates(translatePredAllLowFuncBody(pred.body.get))
       allLowF = Some(Function(allLowFName, lowFFormalArgs, Bool, fPres, Seq(), Some(allLowBody))
-        (pred.pos, pred.info, pred.errT))
+      (pred.pos, pred.info, pred.errT))
 
       primedNames.clear()
       primedNames ++= primedBefore
@@ -564,13 +566,13 @@ trait SIFExtendedTransformer {
     // check if we need to do a reconstruction of this loop (iff it has ret/break/except stmt or we don't optimize)
     val recNeeded: Boolean = {
       var rn = !Config.optimizeControlFlow
-    w.body.visit({
-      case _: SIFReturnStmt => rn = true
-      case _: SIFBreakStmt => rn = true
-      case _: SIFRaiseStmt => rn = true
-      case _: SIFTryCatchStmt => rn = true
-    })
-    rn
+      w.body.visit({
+        case _: SIFReturnStmt => rn = true
+        case _: SIFBreakStmt => rn = true
+        case _: SIFRaiseStmt => rn = true
+        case _: SIFTryCatchStmt => rn = true
+      })
+      rn
     }
 
     var newVarDecls = Seq[LocalVarDecl]()
@@ -592,7 +594,7 @@ trait SIFExtendedTransformer {
       case SIFRaiseStmt(_) => Seq(ctrlVars.except1r.get)
       case SIFTryCatchStmt(body, handlers, elseBlock, finallyBlock) =>
         (body.deepCollect(targetCollectF).distinct.flatten ++
-        handlers.map(h => h.body.deepCollect(targetCollectF).flatten).distinct.flatten ++ (elseBlock match {
+          handlers.map(h => h.body.deepCollect(targetCollectF).flatten).distinct.flatten ++ (elseBlock match {
           case Some(eb) => eb.deepCollect(targetCollectF).distinct.flatten
           case None => Seq()
         }) ++ (finallyBlock match {
@@ -793,7 +795,7 @@ trait SIFExtendedTransformer {
       Some(v)
     }
     var oldret1r, oldret2r, oldbreak1r, oldbreak2r, oldcont1r, oldcont2r,
-      oldexcept1r, oldexcept2r: Option[LocalVar] = None
+    oldexcept1r, oldexcept2r: Option[LocalVar] = None
     if (hasFinally) {
       oldret1r    = oldAssign(ctrlVars.ret1r,    name = "oldret1")
       oldret2r    = oldAssign(ctrlVars.ret2r,    name = "oldret2")
@@ -965,21 +967,21 @@ trait SIFExtendedTransformer {
         case c: SIFContinueStmt => (LocalVarAssign(ctrlVars.cont1r.get, TrueLit()())(c.pos, c.info, c.errT),
           LocalVarAssign(ctrlVars.cont2r.get, TrueLit()())(c.pos, c.info, c.errT))
         case r@SIFReturnStmt(e, resVar) =>
-          {
-            // TODO
-            val assign1 = resVar match {
-              case Some(rv) => Seq(LocalVarAssign(translateNormal(rv, p1, p2),
-                translateNormal(e.get, p1, p2))(r.pos, r.info, r.errT))
-              case None => Seq()
-            }
-            val assign2 = resVar match {
-              case Some(rv) => Seq(LocalVarAssign(translatePrime(rv, p1, p2),
-                translatePrime(e.get, p1, p2))(r.pos, r.info, r.errT))
-              case None => Seq()
-            }
-            (Seqn(assign1 :+ LocalVarAssign(ctrlVars.ret1r.get, TrueLit()())(), Seq())(),
-              Seqn(assign2 :+ LocalVarAssign(ctrlVars.ret2r.get, TrueLit()())(), Seq())())
+        {
+          // TODO
+          val assign1 = resVar match {
+            case Some(rv) => Seq(LocalVarAssign(translateNormal(rv, p1, p2),
+              translateNormal(e.get, p1, p2))(r.pos, r.info, r.errT))
+            case None => Seq()
           }
+          val assign2 = resVar match {
+            case Some(rv) => Seq(LocalVarAssign(translatePrime(rv, p1, p2),
+              translatePrime(e.get, p1, p2))(r.pos, r.info, r.errT))
+            case None => Seq()
+          }
+          (Seqn(assign1 :+ LocalVarAssign(ctrlVars.ret1r.get, TrueLit()())(), Seq())(),
+            Seqn(assign2 :+ LocalVarAssign(ctrlVars.ret2r.get, TrueLit()())(), Seq())())
+        }
 
         case _ => throw new IllegalArgumentException(s"The statement $s can't be translated partially")
       }
@@ -1005,9 +1007,9 @@ trait SIFExtendedTransformer {
 
       var newStmts = Seq[Stmt]()
       var (comp, rest) = sequenceSplit(s.ss)
-//      println("optimizing compressible statements:")
+      //      println("optimizing compressible statements:")
       while (comp.nonEmpty || rest.nonEmpty) {
-//        println(s"split into comp: $comp and rest: $rest")
+        //        println(s"split into comp: $comp and rest: $rest")
         // collect all compressible statements we have until here
         if (comp.nonEmpty) {
           val (fstExComp, secExComp): (Seq[Stmt], Seq[Stmt]) = comp.map(stmt => translateStmtPartial(stmt)).unzip
@@ -1017,7 +1019,7 @@ trait SIFExtendedTransformer {
         var split = rest.span(stmt => !isCompressible(stmt))
         val nonComp = split._1
         rest = split._2
-//        println(s"split into non-comp: $nonComp and rest: $rest")
+        //        println(s"split into non-comp: $nonComp and rest: $rest")
         nonComp.foreach(stmt => newStmts :+= translateStatement(stmt, ctx))
         // start anew
         split = sequenceSplit(rest)
@@ -1031,8 +1033,8 @@ trait SIFExtendedTransformer {
       case l@LocalVarAssign(lhs, rhs)  => translateAssignment(translateNormal(lhs, p1, p2),
         translateNormal(rhs, p1, p2), translatePrime(lhs, p1, p2), translatePrime(rhs, p1, p2), l)
       case a@FieldAssign(lhs, rhs)  => executeConditionally(Seqn(Seq(a), Seq())(),
-          Seqn(Seq(FieldAssign(translatePrime(lhs, p1, p2),
-            translatePrime(rhs, p1, p2))(a.pos, a.info, a.errT)), Seq())())
+        Seqn(Seq(FieldAssign(translatePrime(lhs, p1, p2),
+          translatePrime(rhs, p1, p2))(a.pos, a.info, a.errT)), Seq())())
       case n@NewStmt(lhs, fields) => {
         val allFields = fields ++ fields.map{f => newFields.find(f2 => f2.name == primedNames(f.name)).get}
         val (tmpd, tmpr) = getNewVar("tmp", Ref)
@@ -1044,7 +1046,7 @@ trait SIFExtendedTransformer {
         }*/
         val assign1 = If(act1, Seqn(Seq(LocalVarAssign(lhs, tmpr)()), Seq())(), skip)()
         val assign2 = If(act2, Seqn(Seq(LocalVarAssign(translatePrime(lhs, p1, p2), tmpr)()),
-            Seq())(), skip)()
+          Seq())(), skip)()
         Seqn(Seq(newNew) ++  /*allFieldAssigns ++*/ Seq(assign1, assign2, incrementTime(p1, p2)), Seq(tmpd))()
       }
       case i@If(cond, thn, els) => {
@@ -1125,7 +1127,7 @@ trait SIFExtendedTransformer {
         }
         newDecls ++= seq.scopedDecls.filter(d => d.isInstanceOf[Label])
         val newStmts = if (Config.optimizeSequential) optimizeSequential(seq)
-          else seq.ss.map{stmt => translateStatement(stmt, ctx)}
+        else seq.ss.map{stmt => translateStatement(stmt, ctx)}
         Seqn(newStmts, newDecls)()
       }
       case a@Assert(e1) =>
@@ -1662,7 +1664,7 @@ trait SIFExtendedTransformer {
       (Seq(ret1r, ret2r, break1r, break2r, cont1r, cont2r, except1r, except2r)
         .filter(v => v.isDefined)
         .map(v => LocalVarAssign(v.get, FalseLit()())())) ++
-      (labelRefs1 ++ labelRefs2).map(v => LocalVarAssign(v, FalseLit()())())
+        (labelRefs1 ++ labelRefs2).map(v => LocalVarAssign(v, FalseLit()())())
     }
 
     private def conjoinVars(s: Seq[Exp]): Option[Exp] = {
@@ -1718,3 +1720,9 @@ trait SIFExtendedTransformer {
 }
 
 object SIFExtendedTransformer extends SIFExtendedTransformer
+
+class SIFTransformer extends ViperTransformer {
+  override def transform(task: BackendVerifier.Task): Either[Seq[AbstractError], BackendVerifier.Task] = {
+    Right(BackendVerifier.Task(SIFExtendedTransformer.transform(task.program, false), task.backtrack))
+  }
+}
