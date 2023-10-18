@@ -134,8 +134,9 @@ trait SIFExtendedTransformer {
       p.methods.map(m => translateMethod(m))
     }
 
-    p.copy(domains = newDomains, fields = newFields, functions = newFunctions, predicates = newPredicates,
+    val res = p.copy(domains = newDomains, fields = newFields, functions = newFunctions, predicates = newPredicates,
       methods = newMethods)(p.pos, p.info, p.errT)
+    res
   }
 
   def getName(orig: String) : String = {
@@ -1271,6 +1272,7 @@ trait SIFExtendedTransformer {
     val relVars = e.filter{
       case _: SIFLowExp => true
       case _: SIFLowEventExp => true
+      case _: SIFRelExp => true
       case f@DomainFuncApp("Low", _, _) => true
       case f@DomainFuncApp("LowEvent", Seq(), _) => true
       case _ => false
@@ -1453,6 +1455,7 @@ trait SIFExtendedTransformer {
       case pa@PredicateAccess(args, name) => PredicateAccess(args.map(a => translatePrime(a, p1, p2)),
         primedNames(name))(pa.pos, pa.info, pa.errT)
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
+      case SIFRelExp(e, i) => if(i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
       case f@DomainFuncApp("Low", args, _) => TrueLit()()
       case f@DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
       case f@ForPerm(vars, location, body) => ForPerm(vars,
@@ -1464,6 +1467,7 @@ trait SIFExtendedTransformer {
   def translateNormal[T <: Exp](e: T, p1: Exp, p2: Exp): T = {
     e.transform{
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
+      case SIFRelExp(e, i) => if(i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
       case f@DomainFuncApp("Low", args, _) => Implies(And(p1, p2)(), translateSIFLowExpComparison(SIFLowExp(args.head)(), p1, p2))()
     }
   }
