@@ -1271,7 +1271,8 @@ trait SIFExtendedTransformer {
     val relVars = e.filter{
       case _: SIFLowExp => true
       case _: SIFLowEventExp => true
-      case f@DomainFuncApp("Low", args, _) => true
+      case f@DomainFuncApp("Low", _, _) => true
+      case f@DomainFuncApp("LowEvent", Seq(), _) => true
       case _ => false
     }
     relVars.isEmpty
@@ -1395,6 +1396,8 @@ trait SIFExtendedTransformer {
       // for the domain method low, used e.g. for list resource
       case f@DomainFuncApp("Low", args, _) => translateSIFAss(
         SIFLowExp(args.head, None)(f.pos, f.info, f.errT), ctx, relAssertCtx)
+      case f@DomainFuncApp("LowEvent", Seq(), _) => translateSIFAss(
+        SIFLowEventExp()(f.pos, f.info, f.errT), ctx, relAssertCtx)
       case pap@PredicateAccessPredicate(pred, _) =>
         val (lowFunc, lhs) = getPredicateLowFuncExp(pred.predicateName, ctx, Some((p1, p2)))
         lowFunc match {
@@ -1451,6 +1454,7 @@ trait SIFExtendedTransformer {
         primedNames(name))(pa.pos, pa.info, pa.errT)
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
       case f@DomainFuncApp("Low", args, _) => TrueLit()()
+      case f@DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
       case f@ForPerm(vars, location, body) => ForPerm(vars,
         translateResourceAccess(location),
         translatePrime(body, p1, p2))(f.pos, f.info, f.errT)
@@ -1475,7 +1479,8 @@ trait SIFExtendedTransformer {
   def translateToUnary(e: Exp): Exp = {
     val transformed = e.transform{
       case _: SIFLowExp => TrueLit()()
-      case f@DomainFuncApp("Low", args, _) => TrueLit()()
+      case DomainFuncApp("Low", args, _) => TrueLit()()
+      case DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
       case Implies(_: SIFLowExp, _: SIFLowExp) => TrueLit()()
       case i@Implies(lhs, rhs) => Implies(lhs, translateToUnary(rhs))(i.pos, i.info, i.errT)
     }
