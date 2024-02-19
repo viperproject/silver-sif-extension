@@ -19,7 +19,7 @@ class SIFPlugin(@unused reporter: viper.silver.reporter.Reporter,
                 @unused logger: ch.qos.logback.classic.Logger,
                 config: viper.silver.frontend.SilFrontendConfig,
                 fp: FastParser) extends SilverPlugin with ParserPluginTemplate {
-  import fp.{integer, exp, ParserExtension, parenthesizedExp}
+  import fp.{integer, exp, ParserExtension, parenthesizedExp, lineCol, _file}
   import FastParserCompanion.{ExtendedParsing, LeadingWhitespace, PositionParsing, reservedKw, reservedSym}
 
   def condition[$: P]: P[(PReserved[PLowKeyword.type], PExp)] = P(P(PLowKeyword) ~ exp)

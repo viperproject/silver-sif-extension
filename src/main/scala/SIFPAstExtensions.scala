@@ -17,16 +17,14 @@ case object PLowEventKeyword extends PKw("lowEvent") with PKeywordLang
 case class PLowExp(e: PGrouped.Paren[PExp])(val pos: (Position, Position) = (NoPosition, NoPosition)) extends PExtender with PExp {
   typ = TypeHelper.Bool
 
-  override def typeSubstitutions = e.typeSubstitutions
+  override def typeSubstitutions = e.inner.typeSubstitutions
 
   override def forceSubstitution(ts: PTypeSubstitution): Unit = {
-    e.forceSubstitution(ts)
+    e.inner.forceSubstitution(ts)
   }
 
-  override val getSubnodes: Seq[PNode] = Seq(e)
-
   override def typecheck(t: TypeChecker, n: NameAnalyser, expected: PType): Option[Seq[String]] = {
-    t.checkTopTyped(e, None)
+    t.checkTopTyped(e.inner, None)
     if (expected == TypeHelper.Bool)
       None
     else
@@ -34,12 +32,12 @@ case class PLowExp(e: PGrouped.Paren[PExp])(val pos: (Position, Position) = (NoP
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
-    t.checkTopTyped(e, None)
+    t.checkTopTyped(e.inner, None)
     None
   }
 
   override def translateExp(t: Translator): ExtensionExp = {
-    SIFLowExp(t.exp(e))(t.liftPos(this))
+    SIFLowExp(t.exp(e.inner))(t.liftPos(this))
   }
 }
 
@@ -49,8 +47,6 @@ case class PLowEventExp()(val pos: (Position, Position) = (NoPosition, NoPositio
   override def typeSubstitutions = Seq()
 
   override def forceSubstitution(ts: PTypeSubstitution): Unit = {}
-
-  override val getSubnodes: Seq[PNode] = Seq()
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = None
 
@@ -73,8 +69,6 @@ case class PRelExp(e: PExp, i: PIntLit)(val pos: (Position, Position) = (NoPosit
   override def forceSubstitution(ts: PTypeSubstitution): Unit = {
     e.forceSubstitution(ts)
   }
-
-  override val getSubnodes: Seq[PNode] = Seq(e, i)
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
     t.checkTopTyped(e, None)
