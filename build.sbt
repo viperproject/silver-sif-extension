@@ -4,6 +4,29 @@
 //
 // Copyright (c) 2011-2020 ETH Zurich.
 
+ThisBuild / scalaVersion := "2.13.10"
+ThisBuild / scalacOptions ++= Seq(
+    "-encoding", "UTF-8",               // Enforce UTF-8, instead of relying on properly set locales
+    "-deprecation",                     // Warn when using deprecated language features
+    "-unchecked",                       // Warn on generated code assumptions
+    "-feature",                         // Warn on features that requires explicit import
+    "-Wunused",                         // Warn on unused imports
+    "-Ypatmat-exhaust-depth", "40",     // Increase depth of pattern matching analysis
+    // "-Xfatal-warnings",                 // Treat Warnings as errors to guarantee code quality in future changes
+)
+
+// Enforce UTF-8, instead of relying on properly set locales
+ThisBuild / javacOptions ++= Seq("-encoding", "UTF-8", "-charset", "UTF-8", "-docencoding", "UTF-8")
+ThisBuild / javaOptions  ++= Seq("-Dfile.encoding=UTF-8")
+
+// Publishing settings
+
+// Allows 'publishLocal' SBT command to include test artifacts in a dedicated JAR file
+// (whose name is postfixed by 'test-source') and publish it in the local Ivy repository.
+// This JAR file contains all classes and resources for testing and projects like Carbon
+// and Silicon can rely on it to access the test suit implemented in Silver.
+ThisBuild / Test / publishArtifact := true
+
 // Import general settings from Silver
 lazy val silver = project in file("silver")
 
