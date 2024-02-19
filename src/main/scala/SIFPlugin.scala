@@ -9,7 +9,7 @@ package viper.silver.sif
 
 import fastparse._
 import viper.silver.ast.Program
-import viper.silver.parser.FastParser
+import viper.silver.parser._
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
 import viper.silver.parser.FastParserCompanion.whitespace
 
@@ -19,17 +19,19 @@ class SIFPlugin(@unused reporter: viper.silver.reporter.Reporter,
                 @unused logger: ch.qos.logback.classic.Logger,
                 config: viper.silver.frontend.SilFrontendConfig,
                 fp: FastParser) extends SilverPlugin with ParserPluginTemplate {
-  import fp.{FP, exp, integer, ParserExtension}
+  import fp.{integer, exp, ParserExtension, parenthesizedExp}
+  import FastParserCompanion.{ExtendedParsing, LeadingWhitespace, PositionParsing, reservedKw, reservedSym}
 
-  def low[$: P]: P[PLowExp] = FP("low" ~ "(" ~ exp ~ ")").map { case (pos, e) => PLowExp(e)(pos) }
-  def rel[$: P]: P[PRelExp] = FP("rel" ~ "(" ~ exp ~ "," ~ integer ~ ")").map { case (pos, (e, i)) => PRelExp(e, i)(pos) }
-  def lowEvent[$: P]: P[PLowEventExp] = FP("lowEvent").map { case (pos, _) => PLowEventExp()(pos) }
+  def condition[$: P]: P[(PReserved[PLowKeyword.type], PExp)] = P(P(PLowKeyword) ~ exp)
+  // def low[$: P]: P[PLowExp] = P((P[PLowKeyword.type](PLowKeyword) ~ parenthesizedExp) map (PLowExp.apply _).tupled).pos
+  // def rel[$: P]: P[PRelExp] = FP("rel" ~ "(" ~ exp ~ "," ~ integer ~ ")").map { case (pos, (e, i)) => PRelExp(e, i)(pos) }
+  // def lowEvent[$: P]: P[PLowEventExp] = P("lowEvent").map { case (_) => PLowEventExp()(_) }
 
   override def beforeParse(input: String, isImported: Boolean): String = {
-    ParserExtension.addNewKeywords(Set[String]("low", "lowEvent", "rel"))
-    ParserExtension.addNewExpAtEnd(low(_))
-    ParserExtension.addNewExpAtEnd(rel(_))
-    ParserExtension.addNewExpAtEnd(lowEvent(_))
+    ParserExtension.addNewKeywords(Set(PLowKeyword, PLowEventKeyword, PRelKeyword))
+    // ParserExtension.addNewExpAtEnd(low(_))
+    // ParserExtension.addNewExpAtEnd(rel(_))
+    // ParserExtension.addNewExpAtEnd(lowEvent(_))
     input
   }
 

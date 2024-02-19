@@ -6,10 +6,15 @@
 
 package viper.silver.sif
 
-import viper.silver.ast.{ExtensionExp, IntLit, NoPosition, Position}
-import viper.silver.parser.{NameAnalyser, PExp, PExtender, PIntLit, PNode, PType, PTypeSubstitution, Translator, TypeChecker, TypeHelper}
+import viper.silver.ast._
+import viper.silver.parser._
 
-case class PLowExp(e: PExp)(val pos: (Position, Position) = (NoPosition, NoPosition)) extends PExtender with PExp {
+case object PLowKeyword extends PKw("low") with PKeywordLang
+case object PRelKeyword extends PKw("rel") with PKeywordLang
+case object PLowEventKeyword extends PKw("lowEvent") with PKeywordLang
+
+
+case class PLowExp(e: PGrouped.Paren[PExp])(val pos: (Position, Position) = (NoPosition, NoPosition)) extends PExtender with PExp {
   typ = TypeHelper.Bool
 
   override def typeSubstitutions = e.typeSubstitutions
