@@ -9,24 +9,31 @@ package viper.silver.sif
 
 import fastparse._
 import viper.silver.ast.Program
-import viper.silver.parser.FastParser
+import viper.silver.parser.{FastParser, PKeywordLang, PKw}
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
 import viper.silver.parser.FastParserCompanion.whitespace
 
 import scala.annotation.unused
 
+case object PLowKeyword extends PKw("low") with PKeywordLang
+case object PLowEventKeyword extends PKw("lowEvent") with PKeywordLang
+case object PRelKeyword extends PKw("rel") with PKeywordLang
+
+
 class SIFPlugin(@unused reporter: viper.silver.reporter.Reporter,
                 @unused logger: ch.qos.logback.classic.Logger,
                 config: viper.silver.frontend.SilFrontendConfig,
                 fp: FastParser) extends SilverPlugin with ParserPluginTemplate {
-  import fp.{FP, exp, integer, ParserExtension}
 
-  def low[$: P]: P[PLowExp] = FP("low" ~ "(" ~ exp ~ ")").map { case (pos, e) => PLowExp(e)(pos) }
-  def rel[$: P]: P[PRelExp] = FP("rel" ~ "(" ~ exp ~ "," ~ integer ~ ")").map { case (pos, (e, i)) => PRelExp(e, i)(pos) }
-  def lowEvent[$: P]: P[PLowEventExp] = FP("lowEvent").map { case (pos, _) => PLowEventExp()(pos) }
+  import fp.{exp, integer, ParserExtension, lineCol, _file}
+  import viper.silver.parser.FastParserCompanion.{PositionParsing, reservedKw, whitespace}
+
+  def low[$: P]: P[PLowExp] = P(P(PLowKeyword) ~ "(" ~ exp ~ ")").map { case (_, e) => PLowExp(e)(_) }.pos
+  def rel[$: P]: P[PRelExp] = P(P(PRelKeyword) ~ "(" ~ exp ~ "," ~ integer ~ ")").map { case (_, e, i) => PRelExp(e, i)(_) }.pos
+  def lowEvent[$: P]: P[PLowEventExp] = P(P(PLowEventKeyword)).map { case (_) => PLowEventExp()(_) }.pos
 
   override def beforeParse(input: String, isImported: Boolean): String = {
-    ParserExtension.addNewKeywords(Set[String]("low", "lowEvent", "rel"))
+    ParserExtension.addNewKeywords(Set(PLowKeyword, PLowEventKeyword, PRelKeyword))
     ParserExtension.addNewExpAtEnd(low(_))
     ParserExtension.addNewExpAtEnd(rel(_))
     ParserExtension.addNewExpAtEnd(lowEvent(_))

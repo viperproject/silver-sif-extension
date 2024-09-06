@@ -18,11 +18,9 @@ case class PLowExp(e: PExp)(val pos: (Position, Position) = (NoPosition, NoPosit
     e.forceSubstitution(ts)
   }
 
-  override val getSubnodes: Seq[PNode] = Seq(e)
-
   override def typecheck(t: TypeChecker, n: NameAnalyser, expected: PType): Option[Seq[String]] = {
     t.checkTopTyped(e, None)
-    if (expected == TypeHelper.Bool)
+    if (expected == TypeHelper.Bool || expected == TypeHelper.Impure)
       None
     else
       Some(Seq(s"Expected type ${expected}, but got Bool"))
@@ -45,12 +43,10 @@ case class PLowEventExp()(val pos: (Position, Position) = (NoPosition, NoPositio
 
   override def forceSubstitution(ts: PTypeSubstitution): Unit = {}
 
-  override val getSubnodes: Seq[PNode] = Seq()
-
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = None
 
   override def typecheck(t: TypeChecker, n: NameAnalyser, expected: PType): Option[Seq[String]] = {
-    if (expected == TypeHelper.Bool)
+    if (expected == TypeHelper.Bool || expected == TypeHelper.Impure)
       None
     else
       Some(Seq(s"Expected type ${expected}, but got Bool"))
@@ -68,8 +64,6 @@ case class PRelExp(e: PExp, i: PIntLit)(val pos: (Position, Position) = (NoPosit
   override def forceSubstitution(ts: PTypeSubstitution): Unit = {
     e.forceSubstitution(ts)
   }
-
-  override val getSubnodes: Seq[PNode] = Seq(e, i)
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
     t.checkTopTyped(e, None)
