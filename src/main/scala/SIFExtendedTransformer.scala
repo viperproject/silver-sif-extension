@@ -4,15 +4,13 @@
 //
 // Copyright (c) 2011-2023 ETH Zurich.
 
-package viper.gobra.translator.transformers.hyper
+package viper.silver.sif
 
-import viper.gobra.backend.BackendVerifier
-import viper.gobra.translator.transformers.ViperTransformer
 import viper.silver.ast._
 import viper.silver.ast.utility.Simplifier
-import viper.silver.verifier.{AbstractError, errors}
+import viper.silver.sif.{ViperUtil => vu}
+import viper.silver.verifier.errors
 import viper.silver.verifier.errors.{AssertFailed, ErrorNode}
-import viper.gobra.translator.util.{ViperUtil => vu}
 
 import scala.collection.immutable.HashSet
 import scala.collection.mutable
@@ -137,7 +135,7 @@ trait SIFExtendedTransformer {
     var newFunctions: Seq[Function] = p.functions.flatMap(f => translateFunction(f))
     newPredicates = Seq()
     for (pred <- p.predicates) {
-      val (newPs, predFuncs) = translatePredicate(pred, p)
+      val (newPs, predFuncs) = translatePredicate(pred)
       newPredicates ++= newPs
       newFunctions ++= predFuncs.collect{case f if f.isDefined => f.get}
     }
@@ -599,10 +597,9 @@ trait SIFExtendedTransformer {
     * one for the second. The predicates only contain the unary expressions of the original predicate.
     * Generates a function containing all the relational expressions in the predicates body.
     * @param pred The predicate to translate.
-    * @param p The surrounding program.
     * @return List of the new predicates, plus the low-function.
     */
-  def translatePredicate(pred: Predicate, p: Program): (Seq[Predicate], Seq[Option[Function]]) = {
+  def translatePredicate(pred: Predicate): (Seq[Predicate], Seq[Option[Function]]) = {
     val unaryBody: Option[Exp] = pred.body.map(translateToUnary)
     val newBody1: Option[Exp] = unaryBody.collect({case x => translateNormal(x, null, null)})
     val newBody2: Option[Exp] = unaryBody.collect({case x => translatePrime(x, null, null)})
@@ -1118,7 +1115,6 @@ trait SIFExtendedTransformer {
     val ctrlVars = ctx.ctrlVars
     lazy val act1: Exp = ctx.ctrlVars.activeExecNormal(Some(p1))
     lazy val act2: Exp = ctx.ctrlVars.activeExecPrime(Some(p2))
-    lazy val isInPreservesLow: Boolean = preservesLowMethods.contains(ctx.currentMethod.name)
 
     /** if a1 { ift1 }; if a2 { ift2 }; if p1 { time1 += 1 }; if p2 { time1 += 1 }; */
     def executeConditionally(ift1: Seqn, ift2: Seqn): Stmt = {
@@ -1842,7 +1838,7 @@ trait SIFExtendedTransformer {
       case pa@PredicateAccess(args, name) => PredicateAccess(args.map(a => translatePrime(a, p1, p2)),
         primedNames(name))(pa.pos, pa.info, pa.errT)
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
-      case DomainFuncApp("Low", args, _) => TrueLit()()
+      case DomainFuncApp("Low", _, _) => TrueLit()()
       case f@ForPerm(vars, location, body) => ForPerm(vars,
         translateResourceAccess(location),
         translatePrime(body, p1, p2))(f.pos, f.info, f.errT)
@@ -2157,9 +2153,3 @@ trait SIFExtendedTransformer {
 }
 
 object SIFExtendedTransformer extends SIFExtendedTransformer
-
-class SIFTransformer extends ViperTransformer {
-  override def transform(task: BackendVerifier.Task): Either[Seq[AbstractError], BackendVerifier.Task] = {
-    Right(BackendVerifier.Task(SIFExtendedTransformer.transform(task.program, false), task.backtrack))
-  }
-}
