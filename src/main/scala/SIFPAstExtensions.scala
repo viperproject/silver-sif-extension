@@ -7,7 +7,7 @@
 package viper.silver.sif
 
 import viper.silver.ast.{ExtensionExp, IntLit, NoPosition, Position}
-import viper.silver.parser.{NameAnalyser, PExp, PExtender, PIntLit, PNode, PType, PTypeSubstitution, Translator, TypeChecker, TypeHelper}
+import viper.silver.parser.{NameAnalyser, PExp, PExtender, PIntLit, PType, PTypeSubstitution, Translator, TypeChecker, TypeHelper}
 
 case class PLowExp(e: PExp)(val pos: (Position, Position) = (NoPosition, NoPosition)) extends PExtender with PExp {
   typ = TypeHelper.Bool

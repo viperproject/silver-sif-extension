@@ -11,7 +11,6 @@ import fastparse._
 import viper.silver.ast.Program
 import viper.silver.parser.{FastParser, PKeywordLang, PKw}
 import viper.silver.plugin.{ParserPluginTemplate, SilverPlugin}
-import viper.silver.parser.FastParserCompanion.whitespace
 
 import scala.annotation.unused
 
@@ -22,7 +21,7 @@ case object PRelKeyword extends PKw("rel") with PKeywordLang
 
 class SIFPlugin(@unused reporter: viper.silver.reporter.Reporter,
                 @unused logger: ch.qos.logback.classic.Logger,
-                config: viper.silver.frontend.SilFrontendConfig,
+                @unused config: viper.silver.frontend.SilFrontendConfig,
                 fp: FastParser) extends SilverPlugin with ParserPluginTemplate {
 
   import fp.{exp, integer, ParserExtension, lineCol, _file}

@@ -516,15 +516,15 @@ trait SIFExtendedTransformer {
 
       val access1 = PredicateAccess(formalArgs.map{a => a.localVar}, pred1.name)(pred.pos)
       val access2 = PredicateAccess(duplicatedFormalArgs.map{a => a.localVar}, pred2.name)(pred.pos)
-      val fPres: Seq[Exp] = Seq(And(PredicateAccessPredicate(access1, WildcardPerm()())(),
-        PredicateAccessPredicate(access2, WildcardPerm()())())())
+      val fPres: Seq[Exp] = Seq(And(PredicateAccessPredicate(access1, None)(),
+        PredicateAccessPredicate(access2, None)())())
       val lowFFormalArgs = pred.formalArgs ++ duplicatedFormalArgs
       val primedBefore = primedNames.clone()
       formalArgs.zip(duplicatedFormalArgs).foreach(t => primedNames.update(t._1.name, t._2.name))
 
       def unfoldingPredicates(body: Exp): Exp = {
-        Unfolding(PredicateAccessPredicate(access1, WildcardPerm()())(),
-          Unfolding(PredicateAccessPredicate(access2, WildcardPerm()())(),
+        Unfolding(PredicateAccessPredicate(access1, None)(),
+          Unfolding(PredicateAccessPredicate(access2, None)(),
             body)())()
       }
       if (relationalPredicates.contains(pred)) {
@@ -1162,7 +1162,7 @@ trait SIFExtendedTransformer {
         }
         val if1 = If(act1, Seqn(Seq(u), Seq())(), skip)()
         val if2 = If(act2, Seqn(Seq(
-          Unfold(PredicateAccessPredicate(predicate2, translatePrime(acc.perm, p1, p2))())(u.pos, u.info, u.errT)
+          Unfold(PredicateAccessPredicate(predicate2, Some(translatePrime(acc.perm, p1, p2)))())(u.pos, u.info, u.errT)
         ), Seq())(), skip)()
         Seqn(Seq(assert, if1, if2), Seq())()
       case f@Fold(acc) =>
@@ -1170,7 +1170,7 @@ trait SIFExtendedTransformer {
         val if2 = If(act2, Seqn(Seq(
           Fold(PredicateAccessPredicate(
             PredicateAccess(acc.loc.args.map(a => translatePrime(a, p1, p2)),
-              primedNames(acc.loc.predicateName))(), translatePrime(acc.perm, p1, p2))())(f.pos, f.info, f.errT)
+              primedNames(acc.loc.predicateName))(), Some(translatePrime(acc.perm, p1, p2)))())(f.pos, f.info, f.errT)
         ), Seq())(), skip)()
         val (lowFunc, lhs) = getPredicateLowFuncExp(acc.loc.predicateName, ctx)
         val assert: Stmt = lowFunc match {
