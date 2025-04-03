@@ -1289,7 +1289,7 @@ trait SIFExtendedTransformer {
 
   def translateSIFExp2(e: Exp, p1: Exp, p2: Exp): Exp = {
     e match {
-      case re if isRelational(e) => TrueLit()(e. pos, errT = fwTs(re, re))
+      case re if isRelational(e) => TrueLit()(e.pos, e.info, errT = fwTs(re, re))
       case _ => translatePrime(e, p1, p2)
     }
   }
@@ -1502,7 +1502,7 @@ trait SIFExtendedTransformer {
         val (lowFName, formalArgs, duplicatedFormalArgs) = predLowFuncInfo(loc.predicateName).get
         FuncApp(lowFName,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
-          p.pos, NoInfo, Bool, p.errT)
+          p.pos, p.info, Bool, p.errT)
       case a@And(left, right) => And(translatePredLowFuncBody(left),
         translatePredLowFuncBody(right))(a.pos, a.info, a.errT)
       case o@Or(left, right) => Or(translatePredLowFuncBody(left),
@@ -1524,7 +1524,7 @@ trait SIFExtendedTransformer {
           val (lowFName, formalArgs, duplicatedFormalArgs) = predAllLowFuncInfo(loc.predicateName).get
           FuncApp(lowFName,
             loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
-            p.pos, NoInfo, Bool, p.errT)
+            p.pos, p.info, Bool, p.errT)
         }else{
           TrueLit()()
         }
