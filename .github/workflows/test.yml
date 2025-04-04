@@ -1,0 +1,52 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+# Copyright (c) 2011-2025 ETH Zurich.
+
+name: Build
+
+on:
+  push: # run this workflow on every push
+  pull_request: # run this workflow on every pull_request
+  merge_group: # run this workflow on every PR in the merge queue
+  workflow_dispatch: # allow to manually trigger this workflow
+
+env:
+  java: 11
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Scala and JDK 1.${{ env.java }}
+        uses: olafurpg/setup-scala@v14
+        with:
+          # Should probably be changed to `temurin` once supported by `olafurpg/setup-scala`
+          # See https://github.com/actions/setup-java#supported-distributions
+          java-version: "adopt@1.${{ env.java }}"
+
+      - name: Set sbt cache variables
+        run: echo "SBT_OPTS=-Dsbt.global.base=sbt-cache/.sbtboot -Dsbt.boot.directory=sbt-cache/.boot -Dsbt.ivy.home=sbt-cache/.ivy" >> $GITHUB_ENV
+        # note that the cache path is relative to the directory in which sbt is invoked.
+
+      - name: Cache SBT
+        uses: actions/cache@v4
+        with:
+          path: |
+            sbt-cache/.sbtboot
+            sbt-cache/.boot
+            sbt-cache/.ivy/cache
+          # <x>/project/target and <x>/target, where <x> is e.g. 'silver', are intentionally not
+          # included as several occurrences of NoSuchMethodError exceptions have been observed during CI runs. It seems
+          # like sbt is unable to correctly compute source files that require a recompilation. Therefore, we have
+          # disabled caching of compiled source files altogether
+          key: ${{ runner.os }}-sbt-no-precompiled-sources-${{ hashFiles('**/build.sbt') }}
+
+      - name: Build SIF plugin
+        run: sbt compile

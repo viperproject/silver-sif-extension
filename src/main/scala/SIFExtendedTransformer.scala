@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2011-2023 ETH Zurich.
+// Copyright (c) 2011-2025 ETH Zurich.
 
 package viper.silver.sif
 
@@ -619,8 +619,8 @@ trait SIFExtendedTransformer {
       // primary unary predicate access - p'(x'...)
       val access2 = PredicateAccess(duplicatedFormalArgs.map{a => a.localVar}, pred2.name)(pred.pos)
       // p(x...) && p'(x'...)
-      val fPres: Seq[Exp] = Seq(And(PredicateAccessPredicate(access1, Some(WildcardPerm()()))(),
-        PredicateAccessPredicate(access2, Some(WildcardPerm()()))())())
+      val fPres: Seq[Exp] = Seq(And(PredicateAccessPredicate(access1, None)(),
+        PredicateAccessPredicate(access2, None)())())
 
       val lowFFormalArgs = pred.formalArgs ++ duplicatedFormalArgs // x..., x'...
       val primedBefore = primedNames.clone() // make copy to restore primedNames after predicate translation
@@ -628,8 +628,8 @@ trait SIFExtendedTransformer {
 
       // body => unfolding p(x...) in unfolding p'(x'...) in body
       def unfoldingPredicates(body: Exp): Exp = {
-        Unfolding(PredicateAccessPredicate(access1, Some(WildcardPerm()()))(),
-          Unfolding(PredicateAccessPredicate(access2, Some(WildcardPerm()()))(),
+        Unfolding(PredicateAccessPredicate(access1, None)(),
+          Unfolding(PredicateAccessPredicate(access2, None)(),
             body)())()
       }
       if (relationalPredicates.contains(pred)) {
@@ -1452,9 +1452,8 @@ trait SIFExtendedTransformer {
         val if1 = If(act1, Seqn(Seq(f), Seq())(), skip)()
         val if2 = If(act2, Seqn(Seq(
           Fold(PredicateAccessPredicate(
-            PredicateAccess(acc.loc.args.map(a => translatePrime(a, p1, p2)), primedNames(acc.loc.predicateName))(),
-            Some(translatePrime(acc.perm, p1, p2))
-          )())(f.pos, f.info, f.errT)
+            PredicateAccess(acc.loc.args.map(a => translatePrime(a, p1, p2)),
+              primedNames(acc.loc.predicateName))(), Some(translatePrime(acc.perm, p1, p2)))())(f.pos, f.info, f.errT)
         ), Seq())(), skip)()
         val (lowFunc, lhs) = getPredicateLowFuncExp(acc.loc.predicateName, ctx)
         val assert: Stmt = lowFunc match {
@@ -1573,7 +1572,9 @@ trait SIFExtendedTransformer {
     !e.exists{
       case _: SIFLowExp => true
       case _: SIFLowEventExp => true
+      case _: SIFRelExp => true
       case DomainFuncApp("Low", _, _) => true
+      case DomainFuncApp("LowEvent", Seq(), _) => true
       case _ => false
     }
   }
@@ -1768,6 +1769,8 @@ trait SIFExtendedTransformer {
       // for the domain method low, used e.g. for list resource
       case f@DomainFuncApp("Low", args, _) => translateSIFAss(
         SIFLowExp(args.head, None)(f.pos, f.info, f.errT), ctx, relAssertCtx)
+      case f@DomainFuncApp("LowEvent", Seq(), _) => translateSIFAss(
+        SIFLowEventExp()(f.pos, f.info, f.errT), ctx, relAssertCtx)
       case pap@PredicateAccessPredicate(pred, _) =>
         val (lowFunc, lhs) = getPredicateLowFuncExp(pred.predicateName, ctx, Some((p1, p2)))
         lowFunc match {
@@ -1838,7 +1841,9 @@ trait SIFExtendedTransformer {
       case pa@PredicateAccess(args, name) => PredicateAccess(args.map(a => translatePrime(a, p1, p2)),
         primedNames(name))(pa.pos, pa.info, pa.errT)
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
+      case SIFRelExp(e, i) => if(i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
       case DomainFuncApp("Low", _, _) => TrueLit()()
+      case DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
       case f@ForPerm(vars, location, body) => ForPerm(vars,
         translateResourceAccess(location),
         translatePrime(body, p1, p2))(f.pos, f.info, f.errT)
@@ -1854,6 +1859,7 @@ trait SIFExtendedTransformer {
   def translateNormal[T <: Exp](e: T, p1: Exp, p2: Exp): T = {
     e.transform{
       case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
+      case SIFRelExp(e, i) => if(i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
       case DomainFuncApp("Low", args, _) => Implies(And(p1, p2)(), translateSIFLowExpComparison(SIFLowExp(args.head)(), p1, p2))()
     }
   }
@@ -1871,6 +1877,7 @@ trait SIFExtendedTransformer {
     val transformed = e.transform{
       case _: SIFLowExp => TrueLit()()
       case DomainFuncApp("Low", _, _) => TrueLit()()
+      case DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
       case Implies(_: SIFLowExp, _: SIFLowExp) => TrueLit()() // TODO REM: can also be removed
       case i@Implies(lhs, rhs) => Implies(lhs, translateToUnary(rhs))(i.pos, i.info, i.errT) // TODO REM: can be removed
     }
