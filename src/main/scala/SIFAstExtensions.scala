@@ -109,6 +109,12 @@ case class SIFAssertNoException()(val pos: Position = NoPosition,
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("assert no exception")
 }
 
+/** Low(exp), i.e., exp is the same in both executions.
+  * Optionally, a comparator function can be given: This must be the name of a domain function that, with the given
+  * typVarMap (see DomainFuncApp), can be given two values of the type of exp and return a boolean.
+  * The intention is that low(exp) can be encoded as comparator(exp1, exp2) instead of exp1 == exp2, i.e.,
+  * the function can express a custom notion of equality.
+  */
 case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map[TypeVar, Type] = Map())
                     (val pos: Position = NoPosition,
                      val info: Info = NoInfo,
@@ -128,6 +134,10 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map
   override val extensionIsPure: Boolean = exp.isPure
 }
 
+
+/**
+  * Refers to the value of exp in execution i (must be 0 or 1).
+  */
 case class SIFRelExp(exp: Exp, i: IntLit)
                     (val pos: Position = NoPosition,
                      val info: Info = NoInfo,
@@ -146,6 +156,10 @@ case class SIFRelExp(exp: Exp, i: IntLit)
   override val extensionIsPure: Boolean = exp.isPure
 }
 
+/**
+  * Expresses that the current program point must be reached by both or no execution, i.e., whether it is reached
+  * is low.
+  */
 case class SIFLowEventExp()(val pos: Position = NoPosition,
                             val info: Info = NoInfo,
                             val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
@@ -164,6 +178,10 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
 
 }
 
+/**
+  * To be used only in loop invariants. States that if and when the loop is exited via a break or return is low,
+  * i.e., either both executions break or return in the same iteration, or both do not break or return at all.
+  */
 case class SIFLowExitExp()(val pos: Position = NoPosition,
                             val info: Info = NoInfo,
                             val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
