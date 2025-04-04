@@ -279,7 +279,8 @@ trait SIFExtendedTransformer {
         terminationChannelsLowChecks(terminates.get, condCtx))
       newPosts :+= translateSIFAss(Old(terminates.get.cond)(
         terminates.get.cond.pos, terminates.get.cond.info,
-        ErrTrafo({case _ => SIFTerminationChannelCheckFailed(terminates.get.cond, SIFTermCondNotTight(terminates.get))})
+        MakeTrafoPair(ErrTrafo({case _ => SIFTerminationChannelCheckFailed(terminates.get.cond, SIFTermCondNotTight(terminates.get))}),
+          terminates.get.cond.errT)
       ), condCtx)
     }
 
@@ -317,14 +318,14 @@ trait SIFExtendedTransformer {
     primedNamesPerMethod.update(m.name, primedNames.toMap)
     primedNames.clear()
     primedNames ++= primedBefore
-    Method(m.name, newArgs, newReturns, newPres, newPosts, newBody)(m.pos, m.info)
+    Method(m.name, newArgs, newReturns, newPres, newPosts, newBody)(m.pos, m.info, m.errT)
   }
 
   def _conjoinOptions(in: Seq[Option[Exp]]): Exp = {
     val defined = in.filter(x => x.isDefined).map(x => x.get)
     defined.size match {
       case 0 => TrueLit()()
-      case _ => defined.reduceRight((a, b) => And(a, b)(a.pos, a.info))
+      case _ => defined.reduceRight((a, b) => And(a, b)(a.pos, a.info, a.errT))
     }
   }
 
@@ -344,9 +345,9 @@ trait SIFExtendedTransformer {
       case FieldAccessPredicate(loc, _) => Seq(loc)
     })).flatten.distinct
     for (fieldAcc <- allFieldAccesses) {
-      val eq = SIFLowExp(fieldAcc, None)(m.pos, m.info)
+      val eq = SIFLowExp(fieldAcc, None)(m.pos, m.info, m.errT)
       if (old)
-        lowExpressions :+= Old(eq)(m.pos, m.info)
+        lowExpressions :+= Old(eq)(m.pos, m.info, m.errT)
       else
         lowExpressions :+= eq
     }
@@ -357,13 +358,13 @@ trait SIFExtendedTransformer {
         val funcApp = FuncApp(predAllLowFuncs(loc.predicateName).get,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))()
         if (old)
-          Old(funcApp)(m.pos, m.info)
+          Old(funcApp)(m.pos, m.info, m.errT)
         else
           funcApp
     })
 
     if (lowExpressions.nonEmpty)
-      Some(lowExpressions.reduceRight[Exp]((a, b) => And(a, b)(m.pos, m.info)))
+      Some(lowExpressions.reduceRight[Exp]((a, b) => And(a, b)(m.pos, m.info, m.errT)))
     else
       None
   }
@@ -382,7 +383,7 @@ trait SIFExtendedTransformer {
     if (allLowMethods.contains(m.name)) newPosts :+= allVarsAndStateLow(m, m.formalReturns, old = false, predicateSrc = m.posts)
     if (preservesLowMethods.contains(m.name)) newPosts :+= Implies(
       allVarsAndStateLow(m, m.formalArgs, old = true, predicateSrc = m.pres),
-      allVarsAndStateLow(m, m.formalReturns, old = false, predicateSrc = m.posts))(m.pos, m.info)
+      allVarsAndStateLow(m, m.formalReturns, old = false, predicateSrc = m.posts))(m.pos, m.info, m.errT)
     (newPres, newPosts)
   }
 
@@ -460,14 +461,16 @@ trait SIFExtendedTransformer {
       ReTrafo({case _ => SIFTermCondNotLow(terminates)})
     val pos = terminates.pos
     val info = terminates.info
+    val condLowEventReasonPair = MakeTrafoPair(condLowEventReasonTrafo, terminates.errT)
+    val condLowReasonPair = MakeTrafoPair(condLowReasonTrafo, terminates.errT)
     Seq(
       // Note: cast here is not very elegant, maybe there's a better way to attach the error reason
       // to result of translateSIFAss
-      translateSIFAss(Implies(Not(terminates.cond)(pos, info, condLowEventReasonTrafo),
-        SIFLowEventExp()(pos, info, condLowEventReasonTrafo))(pos, info, condLowEventReasonTrafo), ctx)
-        .asInstanceOf[Implies].copy()(pos, info, condLowEventReasonTrafo),
-      translateSIFAss(SIFLowExp(terminates.cond)(pos, info, condLowReasonTrafo), ctx)
-        .asInstanceOf[Implies].copy()(pos, info, condLowReasonTrafo)
+      translateSIFAss(Implies(Not(terminates.cond)(pos, info, condLowEventReasonPair),
+        SIFLowEventExp()(pos, info, condLowEventReasonPair))(pos, info, condLowEventReasonPair), ctx)
+        .asInstanceOf[Implies].copy()(pos, info, condLowEventReasonPair),
+      translateSIFAss(SIFLowExp(terminates.cond)(pos, info, condLowReasonPair), ctx)
+        .asInstanceOf[Implies].copy()(pos, info, condLowReasonPair)
     )
   }
 
@@ -513,8 +516,8 @@ trait SIFExtendedTransformer {
     if (pred.body.isDefined) {
       val (allLowFName, formalArgs, duplicatedFormalArgs) = predAllLowFuncInfo(pred.name).get
 
-      val access1 = PredicateAccess(formalArgs.map{a => a.localVar}, pred1.name)(pred.pos, pred.info)
-      val access2 = PredicateAccess(duplicatedFormalArgs.map{a => a.localVar}, pred2.name)(pred.pos, pred.info)
+      val access1 = PredicateAccess(formalArgs.map{a => a.localVar}, pred1.name)(pred.pos, pred.info, pred.errT)
+      val access2 = PredicateAccess(duplicatedFormalArgs.map{a => a.localVar}, pred2.name)(pred.pos, pred.info, pred.errT)
       val fPres: Seq[Exp] = Seq(And(PredicateAccessPredicate(access1, None)(),
         PredicateAccessPredicate(access2, None)())())
       val lowFFormalArgs = pred.formalArgs ++ duplicatedFormalArgs
@@ -704,9 +707,9 @@ trait SIFExtendedTransformer {
       stmts ++= Seq(If(p1, Seqn(Seq(LocalVarAssign(cond1r, terminates.get.cond)()), Seq())(), skip)(),
         If(p2, Seqn(Seq(LocalVarAssign(cond2r, translatePrime(terminates.get.cond, p1, p2))()), Seq())(), skip)())
       newStdInvs :+= Implies(Not(cond1r)(), w.cond)(
-        terminates.get.pos, terminates.get.info, ErrTrafo({
+        terminates.get.pos, terminates.get.info, MakeTrafoPair(ErrTrafo({
           case _ => SIFTerminationChannelCheckFailed(terminates.get, SIFTermCondNotTight(terminates.get))
-        }))
+        }), terminates.get.errT))
     }
 
     val invCtx = ctx.copy(
@@ -1053,10 +1056,10 @@ trait SIFExtendedTransformer {
         val (p3d, p3r) = getNewBool("p3")
         val (p4d, p4r) = getNewBool("p4")
 
-        val p1Assign = LocalVarAssign(p1r, And(act1, cond)())(i.pos, i.info)
-        val p2Assign = LocalVarAssign(p2r, And(act2, translatePrime(cond, p1, p2))())(i.pos, i.info)
-        val p3Assign = LocalVarAssign(p3r, And(act1, Not(cond)())())(i.pos, i.info)
-        val p4Assign = LocalVarAssign(p4r, And(act2, Not(translatePrime(cond, p1, p2))())())(i.pos, i.info)
+        val p1Assign = LocalVarAssign(p1r, And(act1, cond)())(i.pos, i.info, i.errT)
+        val p2Assign = LocalVarAssign(p2r, And(act2, translatePrime(cond, p1, p2))())(i.pos, i.info, i.errT)
+        val p3Assign = LocalVarAssign(p3r, And(act1, Not(cond)())())(i.pos, i.info, i.errT)
+        val p4Assign = LocalVarAssign(p4r, And(act2, Not(translatePrime(cond, p1, p2))())())(i.pos, i.info, i.errT)
 
         val thnRes = translateStatement(thn, TranslationContext(p1r, p2r, ctrlVars, ctx.currentMethod))
         val elsRes = translateStatement(els, TranslationContext(p3r, p4r, ctrlVars, ctx.currentMethod))
@@ -1156,7 +1159,7 @@ trait SIFExtendedTransformer {
                 )(),
                 FuncApp(f, acc.loc.args ++ acc.loc.args.map(a => translatePrime(a, p1, p2)))()
               )())()
-            )(u.pos, u.info, errT = et)
+            )(u.pos, u.info, errT = MakeTrafoPair(et, u.errT))
           case None => skip
         }
         val if1 = If(act1, Seqn(Seq(u), Seq())(), skip)()
@@ -1177,9 +1180,9 @@ trait SIFExtendedTransformer {
             val et = ErrTrafo({case AssertFailed(_,_,_) => errors.FoldFailed(f, SIFFoldNotLow(f))})
             Assert(Implies(
               lhs,
-              FuncApp(func.copy()(func.pos, func.info, errT = et),
+              FuncApp(func.copy()(func.pos, func.info, errT = MakeTrafoPair(et, func.errT)),
                 acc.loc.args ++ acc.loc.args.map(a => translatePrime(a, p1, p2)))()
-            )())(f.pos, f.info, errT = et)
+            )())(f.pos, f.info, errT = MakeTrafoPair(et, f.errT))
           case None => skip
         }
         Seqn(Seq(if1, if2, assert), Seq())()
@@ -1382,15 +1385,15 @@ trait SIFExtendedTransformer {
         val comparison = translateSIFLowExpComparison(l, relCtx.p1, relCtx.p2)
         val dynCheckInfo = l.info.getUniqueInfo[SIFDynCheckInfo]
         dynCheckInfo match {
-          case None => bothExecutions(comparison, e.pos, e.info)
+          case None => bothExecutions(comparison, e.pos, e.info, e.errT)
           case Some(dci) =>
             val inhalePart = bothExecutions(Implies(
               EqCmp(translateNormal(dci.dynCheck, relCtx.p1, relCtx.p2), translatePrime(dci.dynCheck, relCtx.p1, relCtx.p2))(), comparison
-            )(), e.pos, e.info)
+            )(), e.pos, e.info, e.errT)
             if (dci.onlyDynVersion) {
               inhalePart
             } else {
-              InhaleExhaleExp(inhalePart, bothExecutions(comparison, e.pos, e.info)
+              InhaleExhaleExp(inhalePart, bothExecutions(comparison, e.pos, e.info, e.errT)
               )(l.pos, l.info, errT = fwTs(l, l))
             }
         }
@@ -1441,7 +1444,7 @@ trait SIFExtendedTransformer {
         l.copy(name = primedNames(l.name))(l.pos, l.info, l.errT)
       case l: LocalVar if !primedNames.contains(l.name) => l
       case FieldAccess(rcv, field) =>
-        FieldAccess(translatePrime(rcv, p1, p2), newFields.find(f => f.name == primedNames(field.name)).get)(e.pos, e.info)
+        FieldAccess(translatePrime(rcv, p1, p2), newFields.find(f => f.name == primedNames(field.name)).get)(e.pos, e.info, e.errT)
       case f@FuncApp(name, _) if Config.primedFuncAppReplacements.keySet.contains(name) =>
         Config.primedFuncAppReplacements(name)(f, p1, p2)
       case f@FuncApp(name, args) if primedNames.contains(name) => FuncApp(primedNames(name),
