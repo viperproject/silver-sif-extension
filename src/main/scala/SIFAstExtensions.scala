@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2011-2020 ETH Zurich.
+// Copyright (c) 2011-2025 ETH Zurich.
 
 package viper.silver.sif
 
@@ -10,7 +10,7 @@ package viper.silver.sif
 import viper.silver.ast.pretty.PrettyPrintPrimitives
 import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps, nil, parens, show, showBlock, text}
 import viper.silver.ast._
-import viper.silver.verifier.VerificationResult
+import viper.silver.verifier.{ConsistencyError, Failure, VerificationResult}
 
 case class SIFReturnStmt(exp: Option[Exp], resVar: Option[LocalVar])
                         (val pos: Position = NoPosition,
@@ -117,7 +117,10 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFLowExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFLowExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = (if (comparator.isDefined) text("lowVal")
     else text("low")) <> parens(show(exp))
@@ -133,7 +136,10 @@ case class SIFRelExp(exp: Exp, i: IntLit)
 
   override def typ: Type = exp.typ
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFRelExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFRelExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = (text("rel") <> parens(show(exp) <> "," <+> show(i)))
 
@@ -147,7 +153,10 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFLowEventExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFLowEventExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowEvent")
 
@@ -162,7 +171,10 @@ case class SIFLowExitExp()(val pos: Position = NoPosition,
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFLowExitExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFLowExitExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowExit")
 
@@ -176,7 +188,10 @@ case class SIFTerminatesExp(cond: Exp)(val pos: Position = NoPosition,
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFTerminatesExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFTerminatesExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont =
     text("terminates under condition") <+> show(cond)

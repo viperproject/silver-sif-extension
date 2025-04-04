@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2011-2020 ETH Zurich.
+// Copyright (c) 2011-2025 ETH Zurich.
 
 package viper.silver.sif
 
@@ -23,7 +23,7 @@ case class PLowExp(e: PExp)(val pos: (Position, Position) = (NoPosition, NoPosit
     if (expected == TypeHelper.Bool || expected == TypeHelper.Impure)
       None
     else
-      Some(Seq(s"Expected type ${expected}, but got Bool"))
+      Some(Seq(s"Expected type ${expected}, but got Bool."))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser): Option[Seq[String]] = {
@@ -49,7 +49,7 @@ case class PLowEventExp()(val pos: (Position, Position) = (NoPosition, NoPositio
     if (expected == TypeHelper.Bool || expected == TypeHelper.Impure)
       None
     else
-      Some(Seq(s"Expected type ${expected}, but got Bool"))
+      Some(Seq(s"Expected type ${expected}, but got Bool."))
   }
 
   override def translateExp(t: Translator): ExtensionExp = {
@@ -72,7 +72,7 @@ case class PRelExp(e: PExp, i: PIntLit)(val pos: (Position, Position) = (NoPosit
     if (i.i == BigInt.int2bigInt(0) || i.i == BigInt.int2bigInt(1))
       None
     else
-      Some(Seq(s"Second argument of rel must be 0 or 1, but is ${i.i}"))
+      Some(Seq(s"Second argument of rel must be 0 or 1, but is ${i.i}."))
   }
 
   override def typecheck(t: TypeChecker, n: NameAnalyser, expected: PType): Option[Seq[String]] = {
@@ -83,9 +83,9 @@ case class PRelExp(e: PExp, i: PIntLit)(val pos: (Position, Position) = (NoPosit
       if (expected == e.typ)
         None
       else
-        Some(Seq(s"Expected type ${expected}, but got ${e.typ}"))
+        Some(Seq(s"Expected type ${expected}, but got ${e.typ}."))
     } else {
-      Some(Seq(s"Second argument of rel must be 0 or 1, but is ${i.i}"))
+      Some(Seq(s"Second argument of rel must be 0 or 1, but is ${i.i}."))
     }
   }
 

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2011-2020 ETH Zurich.
+// Copyright (c) 2011-2025 ETH Zurich.
 
 package viper.silver.sif
 
@@ -134,9 +134,8 @@ trait SIFExtendedTransformer {
       p.methods.map(m => translateMethod(m))
     }
 
-    val res = p.copy(domains = newDomains, fields = newFields, functions = newFunctions, predicates = newPredicates,
+    p.copy(domains = newDomains, fields = newFields, functions = newFunctions, predicates = newPredicates,
       methods = newMethods)(p.pos, p.info, p.errT)
-    res
   }
 
   def getName(orig: String) : String = {
