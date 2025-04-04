@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
-// Copyright (c) 2011-2020 ETH Zurich.
+// Copyright (c) 2011-2025 ETH Zurich.
 
 package viper.silver.sif
 
@@ -10,7 +10,7 @@ package viper.silver.sif
 import viper.silver.ast.pretty.PrettyPrintPrimitives
 import viper.silver.ast.pretty.FastPrettyPrinter.{ContOps, nil, parens, show, showBlock, text}
 import viper.silver.ast._
-import viper.silver.verifier.VerificationResult
+import viper.silver.verifier.{ConsistencyError, Failure, VerificationResult}
 
 case class SIFReturnStmt(exp: Option[Exp], resVar: Option[LocalVar])
                         (val pos: Position = NoPosition,
@@ -109,6 +109,12 @@ case class SIFAssertNoException()(val pos: Position = NoPosition,
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("assert no exception")
 }
 
+/** Low(exp), i.e., exp is the same in both executions.
+  * Optionally, a comparator function can be given: This must be the name of a domain function that, with the given
+  * typVarMap (see DomainFuncApp), can be given two values of the type of exp and return a boolean.
+  * The intention is that low(exp) can be encoded as comparator(exp1, exp2) instead of exp1 == exp2, i.e.,
+  * the function can express a custom notion of equality.
+  */
 case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map[TypeVar, Type] = Map())
                     (val pos: Position = NoPosition,
                      val info: Info = NoInfo,
@@ -117,7 +123,10 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFLowExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFLowExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = (if (comparator.isDefined) text("lowVal")
     else text("low")) <> parens(show(exp))
@@ -125,6 +134,32 @@ case class SIFLowExp(exp: Exp, comparator: Option[String] = None, typVarMap: Map
   override val extensionIsPure: Boolean = exp.isPure
 }
 
+
+/**
+  * Refers to the value of exp in execution i (must be 0 or 1).
+  */
+case class SIFRelExp(exp: Exp, i: IntLit)
+                    (val pos: Position = NoPosition,
+                     val info: Info = NoInfo,
+                     val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
+  override def extensionSubnodes: Seq[Node] = Seq(exp, i)
+
+  override def typ: Type = exp.typ
+
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFRelExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFRelExp: verifyExtExp has not been implemented.", pos)))
+  }
+
+  override def prettyPrint: PrettyPrintPrimitives#Cont = (text("rel") <> parens(show(exp) <> "," <+> show(i)))
+
+  override val extensionIsPure: Boolean = exp.isPure
+}
+
+/**
+  * Expresses that the current program point must be reached by both or no execution, i.e., whether it is reached
+  * is low.
+  */
 case class SIFLowEventExp()(val pos: Position = NoPosition,
                             val info: Info = NoInfo,
                             val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
@@ -132,7 +167,10 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFLowEventExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFLowEventExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowEvent")
 
@@ -140,6 +178,10 @@ case class SIFLowEventExp()(val pos: Position = NoPosition,
 
 }
 
+/**
+  * To be used only in loop invariants. States that if and when the loop is exited via a break or return is low,
+  * i.e., either both executions break or return in the same iteration, or both do not break or return at all.
+  */
 case class SIFLowExitExp()(val pos: Position = NoPosition,
                             val info: Info = NoInfo,
                             val errT: ErrorTrafo = NoTrafos) extends ExtensionExp {
@@ -147,7 +189,10 @@ case class SIFLowExitExp()(val pos: Position = NoPosition,
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFLowExitExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFLowExitExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont = text("lowExit")
 
@@ -161,7 +206,10 @@ case class SIFTerminatesExp(cond: Exp)(val pos: Position = NoPosition,
 
   override def typ: Type = Bool
 
-  override def verifyExtExp(): VerificationResult = ???
+  override def verifyExtExp(): VerificationResult = {
+    assert(assertion = false, "SIFTerminatesExp: verifyExtExp has not been implemented.")
+    Failure(Seq(ConsistencyError("SIFTerminatesExp: verifyExtExp has not been implemented.", pos)))
+  }
 
   override def prettyPrint: PrettyPrintPrimitives#Cont =
     text("terminates under condition") <+> show(cond)
