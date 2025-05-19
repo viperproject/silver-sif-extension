@@ -84,9 +84,11 @@ trait SIFExtendedTransformer {
   val predAllLowFuncInfo = new mutable.HashMap[String, Option[(String, Seq[LocalVarDecl], Seq[LocalVarDecl])]]
 
 
-  // TODO REM: should be a map from string (name) to Field.
-  /** fields of second execution */
-  var newFields : List[Field] = Nil
+  /**
+    * maps field name of first execution to second execution's field. Note that the first execution's fields are not in
+    * this map, i.e., this map's values correspond only to half of the product program's fields.
+    */
+  var newFields : Map[String, Field] = Map.empty
   var newPredicates: Seq[Predicate] = Nil
   var _program : Program = null
   var getArgFunc : DomainFunc = null
@@ -118,7 +120,7 @@ trait SIFExtendedTransformer {
     predLowFuncInfo.clear()
     predAllLowFuncInfo.clear()
     usedNames.clear()
-    newFields = Nil
+    newFields = Map.empty
     newPredicates = Nil
     timing = enableTiming
     _program = p
@@ -131,7 +133,8 @@ trait SIFExtendedTransformer {
 
     collectRelationalPredicates(_program, relationalPredicates) // add all relational predicates
     createNewNames(p)
-    newFields = p.fields.toList.flatMap(f => List(f, f.copy(name=primedNames(f.name))(f.pos, f.info, f.errT)))
+    newFields = p.fields.map(f => f.name -> f.copy(name = primedNames(f.name))(f.pos, f.info, f.errT)).toMap
+    val productFields = p.fields ++ newFields.values
     var newFunctions: Seq[Function] = p.functions.flatMap(f => translateFunction(f))
     newPredicates = Seq()
     for (pred <- p.predicates) {
@@ -151,7 +154,7 @@ trait SIFExtendedTransformer {
       p.methods.map(m => translateMethod(m))
     }
 
-    p.copy(domains = newDomains, fields = newFields, functions = newFunctions, predicates = newPredicates,
+    p.copy(domains = newDomains, fields = productFields, functions = newFunctions, predicates = newPredicates,
       methods = newMethods)(p.pos, p.info, p.errT)
   }
 
@@ -1281,7 +1284,7 @@ trait SIFExtendedTransformer {
           translatePrime(rhs, p1, p2))(a.pos, a.info, a.errT)), Seq())())
       // var tmp; tmp := new(fields...,fields'...); if a1 { lhs := tmp }; if a2 { P[lhs] := tmp }
       case NewStmt(lhs, fields) =>
-        val allFields = fields ++ fields.map{f => newFields.find(f2 => f2.name == primedNames(f.name)).get} // TODO REM: outline field outline
+        val allFields = fields ++ fields.map{f => newFields(f.name)}
         val (tmpd, tmpr) = getNewVar("tmp", Ref)
         val newNew = NewStmt(tmpr, allFields)()
         /*val allFieldAssigns = allFields.map { f =>
@@ -1831,7 +1834,7 @@ trait SIFExtendedTransformer {
         l.copy(name = primedNames(l.name))(l.pos, l.info, l.errT)
       case l: LocalVar if !primedNames.contains(l.name) => l
       case FieldAccess(rcv, field) =>
-        FieldAccess(translatePrime(rcv, p1, p2), newFields.find(f => f.name == primedNames(field.name)).get)(e.pos, e.info, e.errT)
+        FieldAccess(translatePrime(rcv, p1, p2), newFields(field.name))(e.pos, e.info, e.errT)
       case f@FuncApp(name, _) if Config.primedFuncAppReplacements.keySet.contains(name) =>
         Config.primedFuncAppReplacements(name)(f, p1, p2)
       case f@FuncApp(name, args) if primedNames.contains(name) => FuncApp(primedNames(name),
@@ -1999,15 +2002,12 @@ trait SIFExtendedTransformer {
 
   def translateResourceAccess(ra: ResourceAccess): ResourceAccess = {
     ra match {
-      case FieldAccess(rcv, field) => {
-        val primedName = primedNames.getOrElse(field.name, field.name)
-        val newField = newFields.find(f => f.name == primedName).getOrElse(field)
+      case FieldAccess(rcv, field) =>
+        val newField = newFields.getOrElse(field.name, field)
         FieldAccess(rcv, newField)(ra.pos, ra.info, ra.errT)
-      }
-      case PredicateAccess(args, name) => {
+      case PredicateAccess(args, name) =>
         val primedName = primedNames.getOrElse(name, name)
         PredicateAccess(args, primedName)(ra.pos, ra.info, ra.errT)
-      }
       case _ => sys.error("Unsupported")
     }
   }
