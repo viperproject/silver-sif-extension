@@ -51,6 +51,60 @@ trait SIFExtendedTransformer {
     Config.onlyTransformMethodsWithRelationalSpecs = v
   }
 
+  object NameTransformer {
+    /** names of all declarations of input program */
+    private val usedNames = new mutable.HashSet[String]
+
+    def markUsed(names: Iterable[String]): Unit = usedNames ++= names
+
+    /** Returns orig or orig_`i` s.t. result is not in [[usedNames]] */
+    def getUnusedName(orig: String) : String = {
+      if (usedNames.contains(orig)) {
+        var index = 0
+        while (usedNames.contains(orig + "_" + index)) {
+          index += 1
+        }
+        val result = orig + "_" + index
+        usedNames.add(result)
+        result
+      } else {
+        usedNames.add(orig)
+        orig
+      }
+    }
+
+    def clearUsedNames(): Unit = usedNames.clear()
+
+    // the following functions in the NameTransformer compute names for primed program components without depending on
+    // the global registry of used names:
+
+    def getPrimedFieldName(f: Field): String = {
+      s"${f.name}$$_p" // we use '$' to avoid name clashes with user-defined fields
+    }
+
+    /** returns the name of the pure function for accessing a relational predicate */
+    def getPredLowFuncName(p: Predicate): String = {
+      require(p.body.isDefined && relationalPredicates.contains(p), "only relational predicates with a body have a corresponding low pure function")
+      getPredLowFuncName(p.name)
+    }
+    /** the function corresponding to the returned name only exists in the resulting program if the predicate has a body and is relational */
+    def getPredLowFuncName(predicateName: String): String =
+      s"$predicateName$$_low" // we use '$' to avoid name clashes with user-defined functions
+    def isPredLowFuncName(functionName: String): Boolean =
+      functionName.endsWith("$_low")
+
+    /** returns the name of the pure function for asserting that the predicate's footprint is low */
+    def getPredAllLowFuncName(p: Predicate): String = {
+      require(p.body.isDefined && Config.generateAllLowFuncs, "predicates with a body have a corresponding all low pure function if `generateAllLowFuncs` is enabled")
+      getPredAllLowFuncName(p.name)
+    }
+    def getPredAllLowFuncName(predicateName: String): String = {
+      s"$predicateName$$_all_low" // we use '$' to avoid name clashes with user-defined functions
+    }
+    def isPredAllLowFuncName(functionName: String): Boolean =
+      functionName.endsWith("$_all_low")
+  }
+
   /**
     * define FR
     *
@@ -79,9 +133,6 @@ trait SIFExtendedTransformer {
   /** contains _low versions of all relational predicates */
   val predLowFuncInfo = new mutable.HashMap[String, Option[(String, Seq[LocalVarDecl], Seq[LocalVarDecl])]]
   val predAllLowFuncs = new mutable.HashMap[String, Option[Function]]()
-
-  /** contains _all_low versions of all predicates */
-  val predAllLowFuncInfo = new mutable.HashMap[String, Option[(String, Seq[LocalVarDecl], Seq[LocalVarDecl])]]
 
 
   /**
@@ -118,18 +169,18 @@ trait SIFExtendedTransformer {
     primedNames.clear()
     predLowFuncs.clear()
     predLowFuncInfo.clear()
-    predAllLowFuncInfo.clear()
-    usedNames.clear()
+    NameTransformer.clearUsedNames()
     newFields = Map.empty
     newPredicates = Nil
     timing = enableTiming
     _program = p
 
-    // TODO REM: maybe this has to be added only so that getUnusedName does not return the name of a declaration
+    // pre-fill `usedNames` with all declarations present in `p`, s.t., invocations of `getUnusedName` actually return
+    // fresh names:
     val allNames = p.collect({
       case d: Declaration => d.name
     })
-    usedNames ++= allNames
+    NameTransformer.markUsed(allNames)
 
     collectRelationalPredicates(_program, relationalPredicates) // add all relational predicates
     createNewNames(p)
@@ -158,24 +209,6 @@ trait SIFExtendedTransformer {
       methods = newMethods)(p.pos, p.info, p.errT)
   }
 
-  /** names of all declarations of input program */
-  val usedNames = new mutable.HashSet[String]
-  /** Returns orig or orig_`i` s.t. result is not in [[usedNames]] */
-  def getUnusedName(orig: String) : String = {
-    if (usedNames.contains(orig)){
-      var index = 0
-      while (usedNames.contains(orig + "_" + index)){
-        index += 1
-      }
-      val result = orig + "_" + index
-      usedNames.add(result)
-      return result
-    }else{
-      usedNames.add(orig)
-      return orig
-    }
-  }
-
   // TODO REM: depends on the results of relationalPredicates
   /** Create the new names for the programs variables, heap-dependent functions,
     * and predicates, which are used for the second execution. Updates [[primedNames]].
@@ -184,36 +217,19 @@ trait SIFExtendedTransformer {
   def createNewNames(p: Program): Unit = {
     // duplicate domain func names where needed
     for (df <- domainFuncsToDuplicate) { // TODO REM: currently, domainFuncsToDuplicate is empty
-      primedNames.update(df.name, getUnusedName(df.name))
+      primedNames.update(df.name, NameTransformer.getUnusedName(df.name))
     }
     // duplicate field names
     for (f <- p.fields) {
-      val newName = getUnusedName(f.name + 'p')
-      primedNames.update(f.name, newName)
+      primedNames.update(f.name, NameTransformer.getPrimedFieldName(f))
     }
     // duplicate names for functions which depend on the heap
     for (f <- p.functions) {
-      if (isHeapDependent(f, p)) primedNames.update(f.name, getUnusedName(f.name))
+      if (isHeapDependent(f, p)) primedNames.update(f.name, NameTransformer.getUnusedName(f.name))
     }
     // duplicate names for predicates
     for (pred <- p.predicates) {
-      primedNames.update(pred.name, getUnusedName(pred.name)) // new predicate name
-      // TODO REM: renames all parameters for some reason
-      val duplicatedArgs = pred.formalArgs.map{ a =>
-        val newName = getUnusedName(a.name)
-        a.copy(name = newName)(a.pos, a.info, a.errT)
-      }
-      // TODO REM: move to predicate translation (used there for the first time, but names for all predicates need to be known for predicate translation)
-      predLowFuncInfo.update(pred.name, if (relationalPredicates.contains(pred) && pred.body.isDefined)
-        Some(getUnusedName(pred.name + "_low"), pred.formalArgs, duplicatedArgs)
-      else None
-      )
-      // TODO REM: move to predicate translation (used there for the first time, but names for all predicates need to be known for predicate translation)
-      predAllLowFuncInfo.update(pred.name, pred.body match {
-        case Some(_) =>
-          Some(getUnusedName(pred.name + "_all_low"), pred.formalArgs, duplicatedArgs)
-        case None => None
-      })
+      primedNames.update(pred.name, NameTransformer.getUnusedName(pred.name)) // new predicate name
     }
   }
 
@@ -309,7 +325,7 @@ trait SIFExtendedTransformer {
     }
 
     val newArgs = toAdd ++ m.formalArgs.flatMap{a =>
-      val newName = getUnusedName(a.name)
+      val newName = NameTransformer.getUnusedName(a.name)
       primedNames.update(a.name, newName)
       val primedArg = a.copy(name = newName)(a.pos, a.info, a.errT)
       Seq(a, primedArg)
@@ -323,7 +339,7 @@ trait SIFExtendedTransformer {
       time = Some(t1rr)
     }
     val newReturns = toAddRet ++ m.formalReturns.flatMap{r =>
-      val newName = getUnusedName(r.name)
+      val newName = NameTransformer.getUnusedName(r.name)
       primedNames.update(r.name, newName)
       val primedRet = r.copy(name = newName)(r.pos, r.info, r.errT)
       Seq(r, primedRet)
@@ -424,9 +440,9 @@ trait SIFExtendedTransformer {
 
     // all accs we get via predicates
     lowExpressions ++= predicateSrc.flatMap(e => e.deepCollect{
-      case PredicateAccessPredicate(loc, _) =>
-        val funcApp = FuncApp(predAllLowFuncs(loc.predicateName).get,
-          loc.args ++ loc.args.map(a => translatePrime(a, null, null)))()
+      case p@PredicateAccessPredicate(loc, _) =>
+        val funcApp = FuncApp(NameTransformer.getPredAllLowFuncName(loc.predicateName),
+          loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(p.pos, p.info, Bool, p.errT)
         if (old)
           Old(funcApp)(m.pos, m.info, m.errT)
         else
@@ -605,68 +621,82 @@ trait SIFExtendedTransformer {
     * @param pred The predicate to translate.
     * @return List of the new predicates, plus the low-function.
     */
-  def translatePredicate(pred: Predicate): (Seq[Predicate], Seq[Option[Function]]) = {
+  def translatePredicate(pred: Predicate): (Seq[Predicate], Seq[Option[Function]]) = {// since we translate the body to normal and prime, we also translate the predicate's parameters
+    // LA 4.7.25: as we do not register the primed version of the predicate's parameters, `translatePrime` will
+    // leave (parameter) variable accesses unchanged, such that we can use the same parameter names for
+    // the normal and primed predicate
     val unaryBody: Option[Exp] = pred.body.map(translateToUnary)
-    val newBody1: Option[Exp] = unaryBody.collect({case x => translateNormal(x, null, null)})
-    val newBody2: Option[Exp] = unaryBody.collect({case x => translatePrime(x, null, null)})
+    val normalBody: Option[Exp] = unaryBody.collect({case x => translateNormal(x, null, null)})
+    val primedBody: Option[Exp] = unaryBody.collect({case x => translatePrime(x, null, null)})
 
     // normal unary predicate - p
-    val pred1 = pred.copy(body = newBody1)(pred.pos, pred.info, pred.errT)
+    val normalPred = pred.copy(body = normalBody)(pred.pos, pred.info, pred.errT)
     // prime unary predicate - p'
-    val pred2 = pred.copy(name = primedNames(pred.name), body = newBody2)(pred.pos, pred.info, pred.errT)
+    val primedPred = pred.copy(name = primedNames(pred.name), body = primedBody)(pred.pos, pred.info, pred.errT)
 
-    var lowF: Option[Function] = None
-    var allLowF: Option[Function] = None
-    if (pred.body.isDefined) {
-      val (allLowFName, formalArgs, duplicatedFormalArgs) = predAllLowFuncInfo(pred.name).get
-
-      // normal unary predicate access - p(x...)
-      val access1 = PredicateAccess(formalArgs.map{a => a.localVar}, pred1.name)(pred.pos, pred.info, pred.errT)
-      // primary unary predicate access - p'(x'...)
-      val access2 = PredicateAccess(duplicatedFormalArgs.map{a => a.localVar}, pred2.name)(pred.pos, pred.info, pred.errT)
-      // p(x...) && p'(x'...)
-      val fPres: Seq[Exp] = Seq(And(PredicateAccessPredicate(access1, None)(),
-        PredicateAccessPredicate(access2, None)())())
-
-      val lowFFormalArgs = pred.formalArgs ++ duplicatedFormalArgs // x..., x'...
-      val primedBefore = primedNames.clone() // make copy to restore primedNames after predicate translation
-      formalArgs.zip(duplicatedFormalArgs).foreach(t => primedNames.update(t._1.name, t._2.name))
-
-      // body => unfolding p(x...) in unfolding p'(x'...) in body
-      def unfoldingPredicates(body: Exp): Exp = {
-        Unfolding(PredicateAccessPredicate(access1, None)(),
-          Unfolding(PredicateAccessPredicate(access2, None)(),
-            body)())()
-      }
-      if (relationalPredicates.contains(pred)) {
-        val (lowFName, _, _) = predLowFuncInfo(pred.name).get // was added earlier at [[createNewNames]]
-        val fBody: Exp = unfoldingPredicates(translatePredLowFuncBody(pred.body.get))
-        lowF = Some(
-          // function `lowFName`(x..., x'...): Bool {
-          //   unfolding p(x...) in unfolding p'(x'...) in LowBody[body]
-          // }
-          Function(lowFName, lowFFormalArgs, Bool, fPres, Seq(), Some(fBody))(pred.pos, pred.info, pred.errT)
-        )
-      }
-
-      val allLowBody: Exp = unfoldingPredicates(translatePredAllLowFuncBody(pred.body.get))
-      allLowF = Some(
-        // function `allLowFName`(x..., x'...): Bool {
-        //   unfolding p(x...) in unfolding p'(x'...) in AllLowBody[body]
-        // }
-        Function(allLowFName, lowFFormalArgs, Bool, fPres, Seq(), Some(allLowBody))(pred.pos, pred.info, pred.errT)
-      )
-
-      primedNames.clear()
-      primedNames ++= primedBefore
-    }
-
+    val (lowF, allLowF) = if (pred.body.isDefined) generateLowAndAllLowFuncForPred(pred) else (None, None)
     predLowFuncs.update(pred.name, lowF)
     predAllLowFuncs.update(pred.name, allLowF)
-    if (Config.generateAllLowFuncs)
-      (Seq(pred1, pred2), Seq(lowF, allLowF))
-    else
-      (Seq(pred1, pred2), Seq(lowF, None))
+    (Seq(normalPred, primedPred), Seq(lowF, allLowF))
+  }
+
+  /**
+    * generates the following two heap-dependent functions:
+    *
+    * function `lowFName`(x..., x'...): Bool {
+    *   unfolding p(x...) in unfolding p'(x'...) in LowBody[body]
+    * }
+    *
+    * function `allLowFName`(x..., x'...): Bool {
+    *   unfolding p(x...) in unfolding p'(x'...) in AllLowBody[body]
+    * }
+    */
+  private def generateLowAndAllLowFuncForPred(pred: Predicate): (Option[Function], Option[Function]) = {
+    require(pred.body.isDefined, "Predicates without body cannot be translated to low and alllow functions")
+
+
+    val primedNamesBefore = primedNames.clone() // make copy to restore primedNames after predicate translation
+    val primedParams = pred.formalArgs.map(p => {
+      val primedName = NameTransformer.getUnusedName(p.name)
+      primedNames.update(p.name, primedName)
+      p.copy(name = primedName)(p.pos, p.info, p.errT)
+    })
+
+    /** x..., x'... */
+    val combinedParams = pred.formalArgs ++ primedParams
+
+    // normal unary predicate access - p(x...)
+    val normalAccess = PredicateAccess(pred.formalArgs.map{a => a.localVar}, pred.name)(pred.pos, pred.info, pred.errT)
+
+    // primary unary predicate access - p'(x'...)
+    val primedAccess = PredicateAccess(primedParams.map{a => a.localVar}, primedNames(pred.name))(pred.pos, pred.info, pred.errT)
+
+    /** p(x...) && p'(x'...) */
+    val preconditions: Seq[Exp] = Seq(PredicateAccessPredicate(normalAccess, None)(),
+      PredicateAccessPredicate(primedAccess, None)())
+
+    // body => unfolding p(x...) in unfolding p'(x'...) in body
+    def unfoldingPredicates(body: Exp): Exp = {
+      Unfolding(PredicateAccessPredicate(normalAccess, None)(),
+        Unfolding(PredicateAccessPredicate(primedAccess, None)(),
+          body)())()
+    }
+
+    val lowFunc = if (relationalPredicates.contains(pred)) {
+      val lowFuncBody = unfoldingPredicates(translatePredLowFuncBody(pred.body.get))
+      Some(Function(NameTransformer.getPredLowFuncName(pred), combinedParams, Bool, preconditions, Seq.empty, Some(lowFuncBody))(pred.pos, pred.info, pred.errT))
+    } else None
+
+    val allLowFunc = if (Config.generateAllLowFuncs) {
+      val allLowFuncBody = unfoldingPredicates(translatePredAllLowFuncBody(pred.body.get))
+      Some(Function(NameTransformer.getPredAllLowFuncName(pred), combinedParams, Bool, preconditions, Seq.empty, Some(allLowFuncBody))(pred.pos, pred.info, pred.errT))
+    } else None
+
+    // restore primedNames:
+    primedNames.clear()
+    primedNames ++= primedNamesBefore
+
+    (lowFunc, allLowFunc)
   }
 
   /**
@@ -803,11 +833,10 @@ trait SIFExtendedTransformer {
         targetValEqualities2 ++= Seq(eq2)
       }
     }
-    // TODO REM: change to target.nonEmpty
     // if bypass1 { tmp1_1 := Target_1; ... tmp1_N := Target_N }
     // if bypass2 { tmp2_1 := P[Target_1]; ... tmp2_N := P[Target_N] }
-    if (tmpAssigns1.nonEmpty) targetValAssigns :+= If(bypass1r, Seqn(tmpAssigns1, Seq())(), skip)()
-    if (tmpAssigns2.nonEmpty) targetValAssigns :+= If(bypass2r, Seqn(tmpAssigns2, Seq())(), skip)()
+    if (targets.nonEmpty) targetValAssigns :+= If(bypass1r, Seqn(tmpAssigns1, Seq())(), skip)()
+    if (targets.nonEmpty) targetValAssigns :+= If(bypass2r, Seqn(tmpAssigns2, Seq())(), skip)()
 
     /*if (timing){
       val (tmp1d, tmp1r) = getNewVar("tmp1", Int)
@@ -827,13 +856,11 @@ trait SIFExtendedTransformer {
     var ctrlVarToOldMap: Map[LocalVar, LocalVar] = Map()
     // old_ret1 := ret1; old_ret2 := ret2; ... forall control variables (including lables)
     if (recNeeded) {
-      var ctrlFlowTmpAssigns = Seq[Stmt]() // TODO REM: remove
       for (v <- ctrlVars.declarations().map(d => d.localVar)) {
         val (tmp1d, tmp1r) = getNewBool("old" + v.name)
         ctrlVarToOldMap += (v -> tmp1r)
         newVarDecls :+= tmp1d
         stmts :+= LocalVarAssign(tmp1r, v)()
-        ctrlFlowTmpAssigns :+= LocalVarAssign(v, tmp1r)()
       }
     }
 
@@ -1385,7 +1412,7 @@ trait SIFExtendedTransformer {
         val seq = if (Config.optimizeSequential) flattenSeqn(s) else s
         var newDecls = Seq[Declaration]()
         for (d <- seq.scopedDecls.collect{ case d: LocalVarDecl => d }){ // add prime local variable declarations
-          val newName = getUnusedName(d.name)
+          val newName = NameTransformer.getUnusedName(d.name)
           primedNames.update(d.name, newName)
           val newD = LocalVarDecl(newName, d.typ)()
           newDecls ++= Seq(d, newD)
@@ -1562,7 +1589,7 @@ trait SIFExtendedTransformer {
   }
 
   def getNewVar(name: String, typ: Type) : (LocalVarDecl, LocalVar) = {
-    val newName = getUnusedName(name)
+    val newName = NameTransformer.getUnusedName(name)
     (LocalVarDecl(newName, typ)(), LocalVar(newName, typ)())
   }
 
@@ -1799,7 +1826,7 @@ trait SIFExtendedTransformer {
           case None => translateAssDefault(pap, p1, p2)
         }
       case o@Old(oldExp) => Old(translateSIFAss(oldExp, ctx, relAssertCtx))(o.pos, o.info, o.errT)
-      case FuncApp(name, _) if predAllLowFuncs.values.exists(v => v.isDefined && v.get.name == name) =>
+      case FuncApp(name, _) if NameTransformer.isPredAllLowFuncName(name) =>
         bothExecutions(e)
       case Unfolding(predAcc, body) if !isDirectlyUnary(body) => bothExecutions(Unfolding(
         translateNormal(predAcc, relCtx.p1, relCtx.p2),
@@ -1884,8 +1911,6 @@ trait SIFExtendedTransformer {
       case _: SIFLowExp => TrueLit()()
       case DomainFuncApp("Low", _, _) => TrueLit()()
       case DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
-      case Implies(_: SIFLowExp, _: SIFLowExp) => TrueLit()() // TODO REM: can also be removed
-      case i@Implies(lhs, rhs) => Implies(lhs, translateToUnary(rhs))(i.pos, i.info, i.errT) // TODO REM: can be removed
     }
     Simplifier.simplify(transformed)
   }
@@ -1912,7 +1937,7 @@ trait SIFExtendedTransformer {
     val translated = e match {
       case l: SIFLowExp => translateSIFLowExpComparison(l, null, null)
       case p@PredicateAccessPredicate(loc, _) =>
-        val (lowFName, _, _) = predLowFuncInfo(loc.predicateName).get
+        val lowFName = NameTransformer.getPredLowFuncName(loc.predicateName)
         FuncApp(lowFName,
           loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
           p.pos, NoInfo, Bool, p.errT)
@@ -1947,14 +1972,9 @@ trait SIFExtendedTransformer {
     val translated = e match {
       case FieldAccessPredicate(loc, _) => EqCmp(loc, translatePrime(loc, null, null))()
       case p@PredicateAccessPredicate(loc, _) =>
-        if (predAllLowFuncInfo(loc.predicateName).isDefined){
-          val (lowFName, _, _) = predAllLowFuncInfo(loc.predicateName).get
-          FuncApp(lowFName,
-            loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
-            p.pos, NoInfo, Bool, p.errT)
-        }else{
-          TrueLit()() // TODO REM: case should never happen b.c. all predicates are in predAllLowFuncInfo, see [[createNewNames]]
-        }
+        FuncApp(NameTransformer.getPredAllLowFuncName(loc.predicateName),
+          loc.args ++ loc.args.map(a => translatePrime(a, null, null)))(
+          p.pos, p.info, Bool, p.errT)
 
       case a@And(left, right) => And(translatePredAllLowFuncBody(left),
         translatePredAllLowFuncBody(right))(a.pos, a.info, a.errT)
