@@ -175,7 +175,7 @@ trait SIFExtendedTransformer {
   val skip: Seqn = Seqn(Seq(), Seq())()
 
   private def defaultReportError(ae: AbstractError): Unit = {
-    println(ae)
+    throw new RuntimeException(ae.toString)
   }
 
   def transform(p: Program, enableTiming: Boolean) : Program = {
