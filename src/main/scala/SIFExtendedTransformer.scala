@@ -268,24 +268,28 @@ trait SIFExtendedTransformer {
     relPreds ++= p.predicates.filter(pred => directlyRelational(pred))
 
 
-    // Add all predicates to relPreds who are a dependency of a predicate in relPreds
-    // TODO BUG: it seems that currently only the first layer of predicates are added
+    // Add all predicates to relPreds who are a dependency of a predicate in relPreds (in either direction)
 
     val dependencies = mutable.HashMap[String, Seq[String]]()
+    val revDependencies = mutable.HashMap[String, Seq[String]]()
 
-    relPreds.foreach(pred =>
+    p.predicates.foreach(pred =>
       // put the name of this as depending on all referenced predicates
       pred.body.collect{
         case pap: PredicateAccessPredicate => pap
-      }.foreach(pap =>
+      }.foreach(pap => {
         dependencies.update(pap.loc.predicateName, dependencies.getOrElse(pap.loc.predicateName, Seq()) :+ pred.name)
-      )
+        revDependencies.update(pred.name, dependencies.getOrElse(pred.name, Seq()) :+ pap.loc.predicateName)
+      })
     )
     // go through dependent predicates to add them to relationals
     val queue = mutable.Queue[String](relPreds.toSeq.map(rp => rp.name): _*)
     while (queue.nonEmpty) {
       val head: String = queue.dequeue()
       for (dep <- dependencies.getOrElse(head, Seq())) {
+        if (relPreds.add(p.findPredicate(dep))) queue.enqueue(dep)
+      }
+      for (dep <- revDependencies.getOrElse(head, Seq())) {
         if (relPreds.add(p.findPredicate(dep))) queue.enqueue(dep)
       }
     }
