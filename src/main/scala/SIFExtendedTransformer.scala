@@ -8,9 +8,11 @@ package viper.silver.sif
 
 import viper.silver.ast._
 import viper.silver.ast.utility.Simplifier
+import viper.silver.plugin.standard.predicateinstance.PredicateInstance
 import viper.silver.sif.{ViperUtil => vu}
-import viper.silver.verifier.errors
-import viper.silver.verifier.errors.{AssertFailed, ErrorNode}
+import viper.silver.verifier.{AbstractError, errors}
+import viper.silver.verifier.errors.{AssertFailed, ErrorNode, Internal}
+import viper.silver.verifier.reasons.FeatureUnsupported
 
 import scala.collection.immutable.HashSet
 import scala.collection.mutable
@@ -33,7 +35,11 @@ trait SIFExtendedTransformer {
       * May lead to invalid programs when such a method calls another methods that does contain such specs.
       */
     var onlyTransformMethodsWithRelationalSpecs: Boolean = false
-    var generateAllLowFuncs: Boolean = true
+    var generateAllLowFuncs: Boolean = false
+    /** Set this to enable experimental support for certain gotos and rel-expressions. */
+    var enableExperimentalFeatures: Boolean = false
+    /** Function to be called when errors are encountered. Prints to stdout by default. */
+    var reportError: AbstractError => Unit = defaultReportError
   }
   def optimizeControlFlow(v: Boolean): Unit = {
     Config.optimizeControlFlow = v
@@ -165,6 +171,10 @@ trait SIFExtendedTransformer {
 
   val skip: Seqn = Seqn(Seq(), Seq())()
 
+  private def defaultReportError(ae: AbstractError): Unit = {
+    println(ae)
+  }
+
   def transform(p: Program, enableTiming: Boolean) : Program = {
     primedNames.clear()
     predLowFuncs.clear()
@@ -186,6 +196,16 @@ trait SIFExtendedTransformer {
     createNewNames(p)
     newFields = p.fields.map(f => f.name -> f.copy(name = primedNames(f.name))(f.pos, f.info, f.errT)).toMap
     val productFields = p.fields ++ newFields.values
+
+    for (fn <- p.functions) {
+      val parts = fn.pres ++ fn.posts ++ fn.body.toSeq
+      for (part <- parts) {
+        if (isRelational(part)) {
+          Config.reportError(Internal(part, FeatureUnsupported(part, "Relational assertions are not allowed in functions.")))
+        }
+      }
+    }
+
     var newFunctions: Seq[Function] = p.functions.flatMap(f => translateFunction(f))
     newPredicates = Seq()
     for (pred <- p.predicates) {
@@ -244,7 +264,7 @@ trait SIFExtendedTransformer {
       pred.body.isDefined && !isDirectlyUnary(pred.body.get)
     }
 
-    relPreds.clear() // TODO REM
+    relPreds.clear()
     relPreds ++= p.predicates.filter(pred => directlyRelational(pred))
 
 
@@ -277,6 +297,11 @@ trait SIFExtendedTransformer {
         Some(df.copy(name = primedNames(df.name))(df.pos, df.info, df.domainName, df.errT))
       } else None
       Seq(df) ++ duplicate
+    }
+    for (ax <- d.axioms) {
+      if (isRelational(ax.exp)) {
+        Config.reportError(Internal(ax.exp, FeatureUnsupported(ax.exp, "Relational assertions are not allowed in domains.")))
+      }
     }
     d.copy(functions = newFunctions)(d.pos, d.info, d.errT)
   }
@@ -1564,7 +1589,9 @@ trait SIFExtendedTransformer {
         Seqn(newCtrlVars.initAssigns() :+ translateStatement(stmts, inlinedCtx), newCtrlVars.declarations())()
 
       //  if a1 { l_var := true }; if a2 { l_var' := true }
-      case Goto(l) =>
+      case g@Goto(l) =>
+        if (!Config.enableExperimentalFeatures)
+          Config.reportError(Internal(g, FeatureUnsupported(g, "Goto statements are currently not supported.")))
         val varName1 = ctrlVars.labelNames(l)
         val varName2 = primedNames(varName1)
         val assign1 = If(act1, Seqn(Seq(LocalVarAssign(LocalVar(varName1, Bool)(), TrueLit()())()), Seq())(), Seqn(Seq(), Seq())())()
@@ -1787,15 +1814,15 @@ trait SIFExtendedTransformer {
         val comparison = translateSIFLowExpComparison(l, relCtx.p1, relCtx.p2)
         val dynCheckInfo = l.info.getUniqueInfo[SIFDynCheckInfo]
         dynCheckInfo match {
-          case None => bothExecutions(comparison, e.pos, e.info, e.errT)
+          case None => bothExecutions(comparison, e.pos, e.info, fwTs(l, l))
           case Some(dci) =>
             val inhalePart = bothExecutions(Implies(
               EqCmp(translateNormal(dci.dynCheck, relCtx.p1, relCtx.p2), translatePrime(dci.dynCheck, relCtx.p1, relCtx.p2))(), comparison
-            )(), e.pos, e.info, e.errT)
+            )(), e.pos, e.info, fwTs(l, l))
             if (dci.onlyDynVersion) {
               inhalePart
             } else {
-              InhaleExhaleExp(inhalePart, bothExecutions(comparison, e.pos, e.info, e.errT)
+              InhaleExhaleExp(inhalePart, bothExecutions(comparison, e.pos, e.info, fwTs(l, l))
               )(l.pos, l.info, errT = fwTs(l, l))
             }
         }
@@ -1873,8 +1900,11 @@ trait SIFExtendedTransformer {
       case pa@PredicateAccess(args, "MayJoin") => PredicateAccess(args.map(a => translatePrime(a, p1, p2)), "MayJoinP")(pa.pos, pa.info, pa.errT)
       case pa@PredicateAccess(args, name) => PredicateAccess(args.map(a => translatePrime(a, p1, p2)),
         primedNames(name))(pa.pos, pa.info, pa.errT)
-      case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
-      case SIFRelExp(e, i) => if(i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
+      case PredicateInstance(name, args) => PredicateInstance(primedNames(name), args.map(a => translatePrime(a, p1, p2)))(e.pos, e.info, e.errT)
+      case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))(errT = fwTs(l, l))
+      case r@SIFRelExp(e, i) =>
+        Config.reportError(Internal(r, FeatureUnsupported(r, "rel expressions are an experimental feature and must be explicitly enabled.")))
+        if(i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
       case DomainFuncApp("Low", _, _) => TrueLit()()
       case DomainFuncApp("LowEvent", Seq(), _) => TrueLit()()
       case f@ForPerm(vars, location, body) => ForPerm(vars,
@@ -1891,8 +1921,11 @@ trait SIFExtendedTransformer {
     */
   def translateNormal[T <: Exp](e: T, p1: Exp, p2: Exp): T = {
     e.transform{
-      case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))()
-      case SIFRelExp(e, i) => if (i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
+      case l: SIFLowExp => Implies(And(p1, p2)(), translateSIFLowExpComparison(l, p1, p2))(errT = fwTs(l, l))
+      case r@SIFRelExp(e, i) =>
+        if (!Config.enableExperimentalFeatures)
+          Config.reportError(Internal(r, FeatureUnsupported(r, "rel-expressions are an experimental feature and must be explicitly enabled.")))
+        if (i.i == BigInt.int2bigInt(1)) translatePrime(e, p1, p2) else translateNormal(e, p1, p2)
       case DomainFuncApp("Low", args, _) => Implies(And(p1, p2)(), translateSIFLowExpComparison(SIFLowExp(args.head)(), p1, p2))()
     }
   }

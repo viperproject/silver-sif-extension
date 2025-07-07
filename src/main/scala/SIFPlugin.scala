@@ -40,6 +40,7 @@ class SIFPlugin(@unused reporter: viper.silver.reporter.Reporter,
   }
 
   override def beforeVerify(input: Program): Program = {
+    SIFExtendedTransformer.Config.reportError = this.reportError
     SIFExtendedTransformer.transform(input, false)
   }
 }
