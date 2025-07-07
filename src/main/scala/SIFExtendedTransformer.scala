@@ -270,18 +270,19 @@ trait SIFExtendedTransformer {
 
     // Add all predicates to relPreds who are a dependency of a predicate in relPreds (in either direction)
 
-    val dependencies = mutable.HashMap[String, Seq[String]]()
-    val revDependencies = mutable.HashMap[String, Seq[String]]()
+    val dependencies = mutable.HashMap[String, Set[String]]()
+    val revDependencies = mutable.HashMap[String, Set[String]]()
 
     p.predicates.foreach(pred =>
       // put the name of this as depending on all referenced predicates
-      pred.body.collect{
+      pred.body.toSeq.flatMap(_.collect{
         case pap: PredicateAccessPredicate => pap
-      }.foreach(pap => {
-        dependencies.update(pap.loc.predicateName, dependencies.getOrElse(pap.loc.predicateName, Seq()) :+ pred.name)
-        revDependencies.update(pred.name, dependencies.getOrElse(pred.name, Seq()) :+ pap.loc.predicateName)
+      }).foreach(pap => {
+        dependencies.update(pap.loc.predicateName, dependencies.getOrElse(pap.loc.predicateName, Set()) + pred.name)
+        revDependencies.update(pred.name, revDependencies.getOrElse(pred.name, Set()) + pap.loc.predicateName)
       })
     )
+
     // go through dependent predicates to add them to relationals
     val queue = mutable.Queue[String](relPreds.toSeq.map(rp => rp.name): _*)
     while (queue.nonEmpty) {
