@@ -9,6 +9,7 @@ package viper.silver.sif
 import viper.silver.ast._
 import viper.silver.ast.utility.Simplifier
 import viper.silver.plugin.standard.predicateinstance.PredicateInstance
+import viper.silver.plugin.standard.refute.Refute
 import viper.silver.sif.{ViperUtil => vu}
 import viper.silver.verifier.{AbstractError, errors}
 import viper.silver.verifier.errors.{AssertFailed, ErrorNode, Internal}
@@ -1618,6 +1619,7 @@ trait SIFExtendedTransformer {
         Seqn(Seq(lb, assign1, assign2), Seq())()
 
       case lb : Label => lb
+      case r@Refute(e) => Refute(translateSIFAss(e, ctx.copy(p1 = act1, p2 = act2)))(s.pos, s.info, errT= fwTs(r, r))
       case other => throw new IllegalArgumentException("unexpected: " + other)
     }
   }
