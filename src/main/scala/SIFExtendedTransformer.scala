@@ -91,9 +91,11 @@ trait SIFExtendedTransformer {
       s"${f.name}$$_p" // we use '$' to avoid name clashes with user-defined fields
     }
 
+    /** determines whether the predicate `p` will have a corresponding low function in the encoding */
+    def hasPredLowFunc(p: Predicate): Boolean = p.body.isDefined && relationalPredicates.contains(p)
     /** returns the name of the pure function for accessing a relational predicate */
     def getPredLowFuncName(p: Predicate): String = {
-      require(p.body.isDefined && relationalPredicates.contains(p), "only relational predicates with a body have a corresponding low pure function")
+      require(hasPredLowFunc(p), "only relational predicates with a body have a corresponding low pure function")
       getPredLowFuncName(p.name)
     }
     /** the function corresponding to the returned name only exists in the resulting program if the predicate has a body and is relational */
@@ -102,9 +104,11 @@ trait SIFExtendedTransformer {
     def isPredLowFuncName(functionName: String): Boolean =
       functionName.endsWith("$_low")
 
+    /** determines whether the predicate `p` will have a corresponding all low function in the encoding */
+    def hasPredAllLowFunc(p: Predicate): Boolean = p.body.isDefined && Config.generateAllLowFuncs
     /** returns the name of the pure function for asserting that the predicate's footprint is low */
     def getPredAllLowFuncName(p: Predicate): String = {
-      require(p.body.isDefined && Config.generateAllLowFuncs, "predicates with a body have a corresponding all low pure function if `generateAllLowFuncs` is enabled")
+      require(hasPredAllLowFunc(p), "predicates with a body have a corresponding all low pure function if `generateAllLowFuncs` is enabled")
       getPredAllLowFuncName(p.name)
     }
     def getPredAllLowFuncName(predicateName: String): String = {
@@ -137,12 +141,6 @@ trait SIFExtendedTransformer {
   val primedNamesPerMethod = new mutable.HashMap[String, Map[String, String]]
   val primedNames = new mutable.HashMap[String, String]
   val relationalPredicates = new mutable.HashSet[Predicate]
-  val predLowFuncs = new mutable.HashMap[String, Option[Function]]
-
-  /** contains _low versions of all relational predicates */
-  val predLowFuncInfo = new mutable.HashMap[String, Option[(String, Seq[LocalVarDecl], Seq[LocalVarDecl])]]
-  val predAllLowFuncs = new mutable.HashMap[String, Option[Function]]()
-
 
   /**
     * maps field name of first execution to second execution's field. Note that the first execution's fields are not in
@@ -180,8 +178,6 @@ trait SIFExtendedTransformer {
 
   def transform(p: Program, enableTiming: Boolean) : Program = {
     primedNames.clear()
-    predLowFuncs.clear()
-    predLowFuncInfo.clear()
     NameTransformer.clearUsedNames()
     newFields = Map.empty
     newPredicates = Nil
@@ -668,8 +664,6 @@ trait SIFExtendedTransformer {
     val primedPred = pred.copy(name = primedNames(pred.name), body = primedBody)(pred.pos, pred.info, pred.errT)
 
     val (lowF, allLowF) = if (pred.body.isDefined) generateLowAndAllLowFuncForPred(pred) else (None, None)
-    predLowFuncs.update(pred.name, lowF)
-    predAllLowFuncs.update(pred.name, allLowF)
     (Seq(normalPred, primedPred), Seq(lowF, allLowF))
   }
 
@@ -1496,7 +1490,7 @@ trait SIFExtendedTransformer {
                   PermGeCmp(CurrentPerm(acc.loc)(), FullPerm()())(),
                   PermGeCmp(CurrentPerm(predicate2)(), FullPerm()())()
                 )(),
-                FuncApp(f, acc.loc.args ++ acc.loc.args.map(a => translatePrime(a, p1, p2)))()
+                FuncApp(f, acc.loc.args ++ acc.loc.args.map(a => translatePrime(a, p1, p2)))(NoPosition, NoInfo, Bool, NoTrafos)
               )()
             )())(u.pos, u.info, errT = MakeTrafoPair(et, u.errT))
           case None => skip // unfolded predicate is not relational
@@ -1527,8 +1521,8 @@ trait SIFExtendedTransformer {
             val et = ErrTrafo({case AssertFailed(_,_,_) => errors.FoldFailed(f, SIFFoldNotLow(f))})
             Assert(Implies(
               lhs,
-              FuncApp(func.copy()(func.pos, func.info, errT = MakeTrafoPair(et, func.errT)),
-                acc.loc.args ++ acc.loc.args.map(a => translatePrime(a, p1, p2)))()
+              FuncApp(func,
+                acc.loc.args ++ acc.loc.args.map(a => translatePrime(a, p1, p2)))(f.pos, f.info, Bool, errT = MakeTrafoPair(et, f.errT))
             )())(f.pos, f.info, errT = MakeTrafoPair(et, f.errT))
           case None => skip
         }
@@ -1654,7 +1648,7 @@ trait SIFExtendedTransformer {
 
   def isUnary(e: Exp): Boolean = {
     isDirectlyUnary(e) && !e.exists{
-      case PredicateAccess(_, name) => predLowFuncs(name).isDefined // is relational
+      case PredicateAccess(_, name) => relationalPredicates.contains(_program.findPredicate(name)) // is relational
       case _ => false
     }
   }
@@ -1774,7 +1768,7 @@ trait SIFExtendedTransformer {
       case i@Implies(e1, e2) if !isDirectlyUnary(i) =>
         Implies(translateSIFAss(e1, ctx, relAssertCtx), translateSIFAss(e2, ctx, relAssertCtx))(e.pos, e.info, errT = fwTs(e, e))
       case Implies(e1, e2) if e2.exists({
-        case PredicateAccess(_, name) => predLowFuncs(name).isDefined // is relational
+        case PredicateAccess(_, name) => NameTransformer.hasPredLowFunc(_program.findPredicate(name)) // is relational
         case _ => false
       }) =>
         And(translateAssDefault(e, p1, p2), Implies(
@@ -1843,9 +1837,9 @@ trait SIFExtendedTransformer {
       case pap@PredicateAccessPredicate(pred, _) =>
         val (lowFunc, lhs) = getPredicateLowFuncExp(pred.predicateName, ctx, Some((p1, p2)))
         lowFunc match {
-          case Some(f: Function) =>
+          case Some(f) =>
             val lowFuncApp = Implies(lhs,
-              FuncApp(f, pred.args ++ pred.args.map(a => translatePrime(a, p1, p2)))(pap.pos, pap.info, pap.errT)
+              FuncApp(f, pred.args ++ pred.args.map(a => translatePrime(a, p1, p2)))(pap.pos, pap.info, Bool, pap.errT)
             )()
             val dynCheckInfo = pap.info.getUniqueInfo[SIFDynCheckInfo]
             val lowPart: Exp = dynCheckInfo match {
@@ -2043,12 +2037,12 @@ trait SIFExtendedTransformer {
     */
   def translatePredLowFuncOnly(e: Exp, p1: Exp, p2: Exp): Exp = {
     val translated: Exp = e match {
-      case PredicateAccessPredicate(pred, _) =>
-        predLowFuncs(pred.predicateName) match {
-          case Some(f: Function) => Implies(And(p1, p2)(),
-            FuncApp(f, pred.args ++ pred.args.map(a => translatePrime(a, p1, p2)))(e.pos, e.info, e.errT)
-          )()
-          case None => TrueLit()()
+      case PredicateAccessPredicate(p, _) =>
+        val pred = _program.findPredicate(p.predicateName)
+        if (NameTransformer.hasPredLowFunc(pred)) {
+          FuncApp(NameTransformer.getPredLowFuncName(pred), p.args ++ p.args.map(a => translatePrime(a, p1, p2)))(e.pos, e.info, Bool, e.errT)
+        } else {
+          TrueLit()()
         }
       case a@And(left, right) => And(translatePredLowFuncOnly(left, p1, p2),
         translatePredLowFuncOnly(right, p1, p2))(a.pos, a.info, a.errT)
@@ -2079,11 +2073,15 @@ trait SIFExtendedTransformer {
     * Returns predAllLowFunc(predName) if `m` is either all low or preserves low.
     * Otherwise, returns predLowFunc(predName).
     * */
-  def getPredicateLowFunction(predName: String, m: Method): Option[Function] = {
-    if (allLowMethods.contains(m.name) || preservesLowMethods.contains(m.name))
-      predAllLowFuncs(predName)
-    else
-      predLowFuncs(predName)
+  def getPredicateLowFunction(predName: String, m: Method): Option[String] = {
+    val pred = _program.findPredicate(predName)
+    if (NameTransformer.hasPredAllLowFunc(pred) || preservesLowMethods.contains(m.name)) {
+      Some(NameTransformer.getPredAllLowFuncName(pred))
+    } else if (NameTransformer.hasPredLowFunc(pred)) {
+      Some(NameTransformer.getPredLowFuncName(pred))
+    } else {
+      None
+    }
   }
 
   /**
@@ -2095,7 +2093,7 @@ trait SIFExtendedTransformer {
     *   ([[getPredicateLowFunction]](p), activeExecNormal && activeExecPrime && Assertion[AllVarsAndStateLow[m.Pre]])
     *   // if m preserves low
     */
-  def getPredicateLowFuncExp(predName: String, ctx: TranslationContext, acts: Option[(Exp, Exp)] = None): (Option[Function], Exp) = {
+  def getPredicateLowFuncExp(predName: String, ctx: TranslationContext, acts: Option[(Exp, Exp)] = None): (Option[String], Exp) = {
     val lowFunc = getPredicateLowFunction(predName, ctx.currentMethod)
     lazy val act1: Exp = if (acts.isDefined) acts.get._1 else ctx.ctrlVars.activeExecNormal(Some(ctx.p1))
     lazy val act2: Exp = if (acts.isDefined) acts.get._2 else ctx.ctrlVars.activeExecPrime(Some(ctx.p2))
