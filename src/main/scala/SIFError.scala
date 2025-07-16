@@ -24,7 +24,7 @@ case class SIFTerminationChannelCheckFailed(offendingNode: ErrorNode, reason: Er
 case class SIFGotoCheckFailed(offendingNode: ErrorNode, reason: ErrorReason,
                                             override val cached: Boolean = false) extends ExtensionAbstractVerificationError {
   val id: String = "sif.goto_check.failed"
-  val text: String = "Goto channel might exist."
+  val text: String = "Side conditions for goto might not hold."
   override def withNode(offendingNode: ErrorNode = this.offendingNode): ErrorMessage =
     SIFGotoCheckFailed(offendingNode, this.reason)
 
