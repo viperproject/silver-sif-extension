@@ -13,7 +13,7 @@ import viper.silver.plugin.standard.refute.Refute
 import viper.silver.sif.{ViperUtil => vu}
 import viper.silver.verifier.{AbstractError, errors}
 import viper.silver.verifier.errors.{AssertFailed, ErrorNode, Internal}
-import viper.silver.verifier.reasons.FeatureUnsupported
+import viper.silver.verifier.reasons.{FeatureUnsupported, InternalReason}
 
 import scala.collection.immutable.HashSet
 import scala.collection.mutable
@@ -1610,7 +1610,12 @@ trait SIFExtendedTransformer {
           ReTrafo({case _ => SIFGotoNotLowEvent(g)})
         val gotoLowEventErrorPair = MakeTrafoPair(gotoLowEventTrafo, g.errT)
         val bothExecutionsReachedMethod = And(ctx.outermostActivationVars._1, ctx.outermostActivationVars._2)()
+        // note that `act1` and `act2` take flags like break or return into account
         val equalActivation = EqCmp(act1, act2)()
+        val encodedLowEvent = translateSIFAss(SIFLowEventExp()(), ctx.copy(p1 = act1, p2 = act2))
+        if (equalActivation != encodedLowEvent) {
+          reportError(Internal(g, InternalReason(g, s"We expect that ${SIFLowEventExp()().prettyPrint} is encoded as equality between the activation variables.")))
+        }
         val assertLowEvent = Assert(Implies(bothExecutionsReachedMethod, equalActivation)())(g.pos, g.info, gotoLowEventErrorPair)
         val conditionalGoto: Stmt = If(Or(act1, act2)(), Seqn(Seq(g), Seq.empty)(), Seqn(Seq.empty, Seq.empty)())(g.pos, g.info, gotoLowEventErrorPair)
         Seqn(Seq(assertLowEvent, conditionalGoto), Seq.empty)(g.pos, g.info, gotoLowEventErrorPair)
