@@ -6,7 +6,7 @@
 
 package viper.silver.sif
 
-import viper.silver.ast.{Fold, Unfold}
+import viper.silver.ast.{Fold, Goto, Unfold}
 import viper.silver.verifier.errors.ErrorNode
 import viper.silver.verifier._
 
@@ -19,6 +19,16 @@ case class SIFTerminationChannelCheckFailed(offendingNode: ErrorNode, reason: Er
     SIFTerminationChannelCheckFailed(offendingNode, this.reason)
 
   override def withReason(r: ErrorReason): AbstractVerificationError = SIFTerminationChannelCheckFailed(offendingNode, r)
+}
+
+case class SIFGotoCheckFailed(offendingNode: ErrorNode, reason: ErrorReason,
+                                            override val cached: Boolean = false) extends ExtensionAbstractVerificationError {
+  val id: String = "sif.goto_check.failed"
+  val text: String = "Side conditions for goto might not hold."
+  override def withNode(offendingNode: ErrorNode = this.offendingNode): ErrorMessage =
+    SIFGotoCheckFailed(offendingNode, this.reason)
+
+  override def withReason(r: ErrorReason): AbstractVerificationError = SIFGotoCheckFailed(offendingNode, r)
 }
 
 case class SIFFoldNotLow(offendingNode: Fold) extends ExtensionAbstractErrorReason {
@@ -60,4 +70,12 @@ case class SIFTermCondNotTight(offendingNode: SIFTerminatesExp) extends Extensio
 
   override def withNode(offendingNode: ErrorNode = this.offendingNode): ErrorMessage =
     SIFTermCondNotTight(offendingNode.asInstanceOf[SIFTerminatesExp])
+}
+
+case class SIFGotoNotLowEvent(offendingNode: Goto) extends ExtensionAbstractErrorReason {
+  val id: String = "sif.goto"
+  val readableMessage: String = s"Goto statement might not be executed by both executions after assuming that both executions enter this method, which is required by the chosen SIF encoding."
+
+  override def withNode(offendingNode: ErrorNode = this.offendingNode): ErrorMessage =
+    SIFGotoNotLowEvent(offendingNode.asInstanceOf[Goto])
 }

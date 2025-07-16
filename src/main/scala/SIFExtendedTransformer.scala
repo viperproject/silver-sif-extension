@@ -13,7 +13,7 @@ import viper.silver.plugin.standard.refute.Refute
 import viper.silver.sif.{ViperUtil => vu}
 import viper.silver.verifier.{AbstractError, errors}
 import viper.silver.verifier.errors.{AssertFailed, ErrorNode, Internal}
-import viper.silver.verifier.reasons.FeatureUnsupported
+import viper.silver.verifier.reasons.{FeatureUnsupported, InternalReason}
 
 import scala.collection.immutable.HashSet
 import scala.collection.mutable
@@ -39,6 +39,14 @@ trait SIFExtendedTransformer {
     var generateAllLowFuncs: Boolean = false
     /** Set this to enable experimental support for certain gotos and rel-expressions. */
     var enableExperimentalFeatures: Boolean = false
+    /**
+      * if gotos jump backwards or outside a loop (which is not supported by the default encoding after enabling
+      * `enableExperimentalFeatures`), enabling this flag uses an encoding that will retain gotos but asserts that they
+      * are low event assuming that both executions reach the outermost context. Currently, we take a method as the
+      * outermost context. However, a more complete encoding could consider the outer context from the two contexts we
+      * are jumping from and to.
+      */
+    var enableGotoLowEventEncoding: Boolean = false
     /** Function to be called when errors are encountered. Prints to stdout by default. */
     var reportError: AbstractError => Unit = defaultReportError
   }
@@ -375,7 +383,7 @@ trait SIFExtendedTransformer {
     }
 
     var (newPres, newPosts) = addLownessConditions(m, m.pres, m.posts) // adds AllVarsAndStateLow to pre and post
-    val condCtx = TranslationContext(p1r, p2r, EmptyControlFlowVars(), m)
+    val condCtx = TranslationContext(p1r, p2r, EmptyControlFlowVars(), m, (p1r, p2r))
     newPres = newPres.map{e => translateSIFAss(e, condCtx.copy(translatingPrecond = true))}
     newPosts = newPosts.map{e => translateSIFAss(e, condCtx)}
     // Termination channels
@@ -417,7 +425,7 @@ trait SIFExtendedTransformer {
 
       // find which control variables the method requires
       val ctrlVars: MethodControlFlowVars = createControlFlowVars(body)
-      val ctx: TranslationContext = TranslationContext(p1r, p2r, ctrlVars, m)
+      val ctx: TranslationContext = TranslationContext(p1r, p2r, ctrlVars, m, (p1r, p2r))
 
       newBody = Some(Seqn(firstStatements ++ ctrlVars.initAssigns() ++
         Seq(translateStatement(body, ctx).asInstanceOf[Seqn]), ctrlVars.declarations())())
@@ -1081,7 +1089,8 @@ trait SIFExtendedTransformer {
         LocalVarAssign(p2r, And(p2, And(thisexcept2r, translatePrime(handler.exception, p1, p2))())())() :+
         If(p1r, Seqn(Seq(LocalVarAssign(ctrlVars.except1r.get, FalseLit()())()), Seq())(), skip)() :+
         If(p2r, Seqn(Seq(LocalVarAssign(ctrlVars.except2r.get, FalseLit()())()), Seq())(), skip)()
-      stmts :+= translateStatement(handler.body, TranslationContext(p1r, p2r, ctrlVars, ctx.currentMethod))
+      val stmtCtx = ctx.copy(p1 = p1r, p2 = p2r, ctrlVars = ctrlVars)
+      stmts :+= translateStatement(handler.body, stmtCtx)
       // assign null to error variable if exception was caught
       stmts :+= translateStatement(LocalVarAssign(handler.errVar, NullLit()())(), ctx)
     }
@@ -1092,7 +1101,8 @@ trait SIFExtendedTransformer {
       newVarDecls ++= Seq(p1d2, p2d2)
       stmts :+= LocalVarAssign(p1r2, And(p1, Not(thisexcept1r)())())()
       stmts :+= LocalVarAssign(p2r2, And(p2, Not(thisexcept2r)())())()
-      stmts :+= translateStatement(tryStmt.elseBlock.get, TranslationContext(p1r2, p2r2, ctrlVars, ctx.currentMethod))
+      val stmtCtx = ctx.copy(p1 = p1r2, p2 = p2r2, ctrlVars = ctrlVars)
+      stmts :+= translateStatement(tryStmt.elseBlock.get, stmtCtx)
     }
     // translate the finally block
     if (hasFinally) {
@@ -1366,8 +1376,10 @@ trait SIFExtendedTransformer {
         val p3Assign = LocalVarAssign(p3r, And(act1, Not(cond)())())(i.pos, i.info, i.errT)
         val p4Assign = LocalVarAssign(p4r, And(act2, Not(translatePrime(cond, p1, p2))())())(i.pos, i.info, i.errT)
 
-        val thnRes = translateStatement(thn, TranslationContext(p1r, p2r, ctrlVars, ctx.currentMethod))
-        val elsRes = translateStatement(els, TranslationContext(p3r, p4r, ctrlVars, ctx.currentMethod))
+        val thnCtx = ctx.copy(p1 = p1r, p2 = p2r, ctrlVars = ctrlVars)
+        val elsCtx = ctx.copy(p1 = p3r, p2 = p4r, ctrlVars = ctrlVars)
+        val thnRes = translateStatement(thn, thnCtx)
+        val elsRes = translateStatement(els, elsCtx)
         Seqn(Seq(p1Assign, p2Assign, p3Assign, p4Assign, incrementTime(p1, p2), thnRes, elsRes), Seq(p1d, p2d, p3d, p4d))()
 
       case w: While => translateWhileStmt(w, ctx)
@@ -1587,9 +1599,28 @@ trait SIFExtendedTransformer {
         Exhale(exp)(s.pos, s.info, s.errT)
       case SIFInlinedCallStmt(stmts) =>
         val newCtrlVars = createControlFlowVars(stmts)
-        val inlinedCtx = TranslationContext(p1, p2, newCtrlVars, ctx.currentMethod)
+        val inlinedCtx = ctx.copy(p1 = p1, p2 = p2, ctrlVars = newCtrlVars)
         Seqn(newCtrlVars.initAssigns() :+ translateStatement(stmts, inlinedCtx), newCtrlVars.declarations())()
 
+      // goto l (if Config.enableGotoLowEventEncoding)
+      // assert [outermostActivationVars] ==> a1 == a2; if (a1 || a2) { goto l }
+      case g: Goto if Config.enableGotoLowEventEncoding =>
+        val gotoLowEventTrafo = ErrTrafo({case _ =>
+          SIFGotoCheckFailed(g, SIFGotoNotLowEvent(g))}) +
+          ReTrafo({case _ => SIFGotoNotLowEvent(g)})
+        val gotoLowEventErrorPair = MakeTrafoPair(gotoLowEventTrafo, g.errT)
+        val bothExecutionsReachedMethod = And(ctx.outermostActivationVars._1, ctx.outermostActivationVars._2)()
+        // note that `act1` and `act2` take flags like break or return into account
+        val equalActivation = EqCmp(act1, act2)()
+        val encodedLowEvent = translateSIFAss(SIFLowEventExp()(), ctx.copy(p1 = act1, p2 = act2))
+        if (equalActivation != encodedLowEvent) {
+          reportError(Internal(g, InternalReason(g, s"We expect that ${SIFLowEventExp()().prettyPrint} is encoded as equality between the activation variables.")))
+        }
+        val assertLowEvent = Assert(Implies(bothExecutionsReachedMethod, equalActivation)())(g.pos, g.info, gotoLowEventErrorPair)
+        val conditionalGoto: Stmt = If(Or(act1, act2)(), Seqn(Seq(g), Seq.empty)(), Seqn(Seq.empty, Seq.empty)())(g.pos, g.info, gotoLowEventErrorPair)
+        Seqn(Seq(assertLowEvent, conditionalGoto), Seq.empty)(g.pos, g.info, gotoLowEventErrorPair)
+
+      // goto l (if !Config.enableGotoLowEventEncoding)
       //  if a1 { l_var := true }; if a2 { l_var' := true }
       case g@Goto(l) =>
         if (!Config.enableExperimentalFeatures)
@@ -1600,10 +1631,10 @@ trait SIFExtendedTransformer {
         val assign2 = If(act2, Seqn(Seq(LocalVarAssign(LocalVar(varName2, Bool)(), TrueLit()())()), Seq())(), Seqn(Seq(), Seq())())()
         Seqn(Seq(assign1, assign2), Seq())()
 
-      // label l
+      // label l (if !Config.enableGotoLowEventEncoding)
       // if (p1 && !ret1 && !break1 && !cont1 && !except1 && !{L1-l_var}...) { l_var := false }
       // if (p2 && !ret2 && !break2 && !cont2 && !except2 && !{L2-l_var'}...) { l_var' := false }
-      case lb@Label(l, _) if ctrlVars.labelNames.contains(l) => // if label is target of goto
+      case lb@Label(l, _) if ctrlVars.labelNames.contains(l) && !Config.enableGotoLowEventEncoding => // if label is target of goto
         val varName1 = ctrlVars.labelNames(l)
         val varName2 = primedNames(varName1)
         val thisAct1 = ctx.ctrlVars.activeExecNormalExceptLabel(Some(p1), varName1)
@@ -2133,6 +2164,8 @@ trait SIFExtendedTransformer {
   case class TranslationContext(p1: Exp, p2: Exp,
                                 ctrlVars: MethodControlFlowVars,
                                 currentMethod: Method,
+                                /** activation variables at the method level; `outermostActivationVars._1` and `outermostActivationVars._2` are typically subexpressions of `p1` and `p2`, resp. */
+                                outermostActivationVars: (Exp, Exp),
                                 translatingPrecond: Boolean = false
                                ) {}
 
@@ -2160,15 +2193,17 @@ trait SIFExtendedTransformer {
     if (hasBreak)  primedNames.update(break1r.get.name, break2r.get.name)
     if (hasCont)   primedNames.update(cont1r.get.name, cont2r.get.name)
     if (hasExcept) primedNames.update(except1r.get.name, except2r.get.name)
-    for (label <- labels){
-      val t1 = getNewBool(label.name + "1")
-      labelRefs1.append(t1._2)
-      labelDecls1.append(t1._1)
-      labelNames.update(label.name, t1._2.name)
-      val t2 = getNewBool(label.name + "2")
-      labelRefs2.append(t2._2)
-      labelDecls2.append(t2._1)
-      primedNames.update(t1._2.name, t2._2.name)
+    if (!Config.enableGotoLowEventEncoding) {
+      for (label <- labels){
+        val t1 = getNewBool(label.name + "1")
+        labelRefs1.append(t1._2)
+        labelDecls1.append(t1._1)
+        labelNames.update(label.name, t1._2.name)
+        val t2 = getNewBool(label.name + "2")
+        labelRefs2.append(t2._2)
+        labelDecls2.append(t2._1)
+        primedNames.update(t1._2.name, t2._2.name)
+      }
     }
 
     def declarations(): Seq[LocalVarDecl] = {
