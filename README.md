@@ -1,4 +1,4 @@
-## ⚠️ This repository is no longer in use. The plugin is now a part of Viper, its code can be found [here](https://github.com/viperproject/silver/tree/master/src/main/scala/viper/silver/plugin/sif).**
+## ⚠️ This repository is no longer in use. The plugin is now a part of Viper, its code can be found [here](https://github.com/viperproject/silver/tree/master/src/main/scala/viper/silver/plugin/sif).
 
 --
 
