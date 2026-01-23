@@ -1,3 +1,5 @@
+**This repository is no longer in use. The plugin is now a part of Viper, its code can be found [here](https://github.com/viperproject/silver/tree/master/src/main/scala/viper/silver/plugin/sif).**
+
 This repository contains an extension of the Viper language with modular product programs and information flow specifications according to [this paper](http://pm.inf.ethz.ch/publications/getpdf.php?bibname=Own&id=EilersMuellerHitz18.pdf).
 
 In particular, this means
